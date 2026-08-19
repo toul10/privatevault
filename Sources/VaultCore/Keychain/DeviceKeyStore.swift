@@ -48,7 +48,7 @@ public final class DeviceKeyStore: Sendable {
             record = SecretKeyRecord(version: 2, mode: .raw, seKey: nil, blob: nil, raw: sk.bytes.copyData(), generation: generation, headerSHA256: headerSHA256, stateMAC: stateMAC)
         }
         try store.write(pending ? Self.pendingAccount(vaultID) : Self.skAccount(vaultID), data: try JSONEncoder().encode(record))
-        SecureLog.log(.keychain, "secret key stored", .category(record.mode.rawValue), .bool(pending))
+        SecureLog.log(.keychain, "secret key stored", .bool(record.mode == .secureEnclave), .bool(pending))
     }
 
     public enum SecretKeyLoad: Sendable {

@@ -55,7 +55,10 @@ final class AppModel {
         self.biometricAvailable = authenticator.biometryAvailable && enclave.isAvailable
         // Windows created later (Settings, sheets) must get the same capture policy.
         windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyWindowSharing() }
+            MainActor.assumeIsolated {
+                for w in NSApp.windows { w.isRestorable = false }   // no UI state of any window is ever persisted
+                self?.applyWindowSharing()
+            }
         }
         AppDelegate.terminateHandler = { [weak self] in
             self?.clipboard.clearIfStillOurs()

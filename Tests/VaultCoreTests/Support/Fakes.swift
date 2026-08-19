@@ -45,7 +45,7 @@ enum TestEnv {
         -> (VaultManager, InMemorySecretStore, FakeSecureEnclave, URL) {
         let d = dir ?? tempDir()
         let url = d.appendingPathComponent("Vault.noindex/vault.sqlite")
-        let m = VaultManager(vaultURL: url, deviceKeys: DeviceKeyStore(store: store, enclave: enclave), kdfPolicy: .testing)
+        let m = VaultManager(vaultURL: url, deviceKeys: DeviceKeyStore(store: store, enclave: enclave), kdfPolicy: .testing, allowWeakKDFForTesting: true)
         return (m, store, enclave, d)
     }
     static let password = "correct horse battery staple 2026"

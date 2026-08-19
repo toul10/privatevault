@@ -35,6 +35,12 @@ backups.
 Details: `SECURITY_ARCHITECTURE.md` (normative spec), `THREAT_MODEL.md` (what is and is not defended),
 `RECOVERY.md` (which loss scenarios are recoverable).
 
+## After cloning (one-time)
+
+```
+git config core.hooksPath .githooks     # enables the pre-commit secret scan in this clone
+```
+
 ## Requirements
 
 - macOS 14 or newer.

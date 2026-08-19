@@ -20,6 +20,12 @@ Package.resolved.bak
 *.pem
 *.key
 *.mobileprovision
+*.provisionprofile
+*.p8
+*.keychain
+*.keychain-db
+*.certSigningRequest
+*.cer
 # exported Recovery Kit text files (never source files)
 *Recovery Kit*.txt
 *recovery-kit*.txt

@@ -132,7 +132,9 @@ struct PasswordPromptSheet: View {
     }
     private func run() async {
         busy = true; error = nil
-        do { try await perform(password); password = ""; dismiss() } catch { self.error = describe(error) }
+        do { try await perform(password); password = ""; dismiss() }
+        catch VaultError.userCancelled { password = ""; dismiss() }
+        catch { self.error = describe(error) }
         busy = false
     }
 }
@@ -235,6 +237,7 @@ struct ShowKitSheet: View {
 struct BackupSettings: View {
     @Environment(AppModel.self) private var model
     @State private var sheet: Sheet?
+    @State private var lastExport: String?
     enum Sheet: Identifiable { case export, restore; var id: Int { hashValue } }
     var body: some View {
         Form {
@@ -242,6 +245,7 @@ struct BackupSettings: View {
                 Text("A backup is a single .privatevault file containing your vault exactly as it is stored on disk: encrypted. Restoring it anywhere requires your Master Password AND your Recovery Kit. Keep backups on an external disk or USB stick.")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("Export encrypted backup…") { sheet = .export }
+                if let lastExport { Label(lastExport, systemImage: "checkmark.circle").foregroundStyle(.green).font(.callout) }
                 Button("Restore encrypted backup… (replaces this vault)") { sheet = .restore }
             }
             .disabled(model.phase != .unlocked)
@@ -252,11 +256,14 @@ struct BackupSettings: View {
             switch s {
             case .export: PasswordPromptSheet(title: "Export encrypted backup", action: "Export") { pw in
                     let data = try await model.exportBackup(password: pw)
-                    await MainActor.run {
+                    try await MainActor.run {
                         let panel = NSSavePanel()
                         panel.nameFieldStringValue = "PrivateVault \(Date().formatted(.iso8601.year().month().day())).\(BackupCodec.fileExtension)"
                         panel.allowedContentTypes = [UTType(filenameExtension: BackupCodec.fileExtension) ?? .data]
-                        if panel.runModal() == .OK, let url = panel.url { try? data.write(to: url, options: [.atomic]) }
+                        guard panel.runModal() == .OK, let url = panel.url else { throw VaultError.userCancelled }
+                        do { try data.write(to: url, options: [.atomic]) } catch { throw VaultError.storage("could not write the backup file") }
+                        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                        lastExport = "Backup saved: \(url.lastPathComponent) (\(data.count / 1024) KB)"
                     }
                 }.environment(model)
             case .restore: RestoreSheet().environment(model)

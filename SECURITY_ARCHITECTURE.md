@@ -185,12 +185,12 @@ separate verifier/hash of the password or key.
 | `id` | primary key; random UUID, needed to address records and for future sync | nothing (random) |
 | `crypto_version` | needed to pick the envelope format before decrypting | app version era |
 | `revision` | monotonic per-record counter, authenticated inside the AAD and used by the state MAC (§5.3) and future sync conflict resolution | how many times a record was edited |
-| `blob` | ciphertext | approximate size class only (plaintext is padded, §4.3) |
+| `blob` | ciphertext | size class only: every ordinary record pads to one 4 KiB bucket (§4.3); only unusually large notes stand out |
 
 **Everything else** — item type, title, website, username, password, notes, tags, favourite flag, creation and
 modification timestamps, last-used time, wallet chain, addresses, seed phrases, private keys — is inside the
-ciphertext. A database thief cannot tell a wallet from a login, cannot count how many logins exist, and cannot
-learn when records were created.
+ciphertext. A database thief cannot tell a wallet from a login (all ordinary records have the same padded size),
+cannot count how many logins exist, and cannot learn when records were created.
 
 ### 4.2 Envelope format (crypto_version = 1)
 
@@ -208,9 +208,10 @@ state MAC.
 
 ### 4.3 Plaintext layout and padding
 
-`plaintext = [u32be length of JSON][JSON bytes][zero padding]` padded to the next multiple of 256 bytes up to
-4 KiB, then to the next multiple of 4 KiB. The JSON is the `VaultItem` document (§6). Padding hides exact field
-lengths (e.g. 12-word vs 24-word seed phrases) from anyone who sees the file.
+`plaintext = [u32be length of JSON][JSON bytes][zero padding]` padded to the next multiple of 4 KiB (minimum
+4 KiB). The JSON is the `VaultItem` document (§6). A login, an API key, a note, a set of recovery codes and a wallet
+with a 24-word seed phrase and private key all fit in the first bucket, so the ciphertext size does not reveal the
+item kind or the seed length; only very large notes (> ~4 KB of text) occupy more buckets.
 
 ### 4.4 Tier-2 fields (seed phrase, private key)
 
@@ -265,12 +266,24 @@ guarantees that v1 vaults and backups keep opening.
 It is recomputed and written in the **same transaction** as every record insert/update/delete. On unlock the app
 recomputes it from the table and compares: a mismatch means a record was deleted, replaced with an older authentic
 version, or the whole table was tampered with outside PrivateVault. The user is warned ("vault modified outside
-PrivateVault or rolled back") and may continue. Additionally the Keychain item that stores the Secret Key mirrors
-the last seen `generation` and `header_sha256`; if the database's generation is *lower* than the Keychain's, the
-app warns about a whole-file rollback (a legitimate Time Machine restore can be acknowledged).
+PrivateVault or rolled back") and may continue.
+
+**Whole-file rollback.** The device record that holds the Secret Key also mirrors the last seen `generation`,
+`header_sha256` and — updated after **every** committed write — the last `state_mac`. On unlock: a lower generation
+⇒ "generation rollback" warning; the same generation but a different `state_mac` than the mirrored one ⇒ "file
+rollback" warning (an older authentic copy was put back; a legitimate Time Machine restore can be acknowledged —
+the warning is shown once and the mirror is re-pinned). The Touch ID path additionally refuses to run at all if the
+file's `header_sha256` differs from the mirrored one (§8.2).
+
+**Unreadable records.** A record whose ciphertext does not authenticate (tampered, bit-rot, unknown version) does
+not brick the vault: the unlock succeeds once the VMK has been verified, the record is quarantined (kept in the
+file, hidden from the UI, excluded from backups), the user sees an "unreadable records" warning and may purge them.
+If *every* record fails, the unlock is refused (`corrupted`) — that is a wrong key for the data, not partial damage.
 
 Limits: the state MAC is keyed with a key derived from the VMK, so an attacker who can *unlock* the vault can
-also recompute it — it detects tampering by someone who cannot decrypt, which is the at-rest threat model.
+also recompute it — it detects tampering by someone who cannot decrypt, which is the at-rest threat model. The
+mirror lives in this Mac's Keychain: on a different Mac (or after the Keychain item is lost) there is no baseline
+and the first unlock cannot detect a rollback.
 
 ---
 
@@ -312,6 +325,16 @@ new header (generation+1); new state_mac; all in one transaction; re-wrap Touch-
 operation, no Touch ID prompt); VACUUM`. After rotation, old headers and old backups no longer decrypt new
 records.
 
+**Secret Key regeneration is crash-safe:** the new key is written to the device store as a *pending* record
+**before** the vault is rewritten, then promoted; an interrupted regeneration is repaired at the next unlock (the
+pending key is tried when the main one no longer matches `sk_id`). If the Keychain refuses the new key, the new
+Recovery Kit is still returned and the UI states that it is the only copy.
+
+### 7.4a Throttling
+Failed Master-Password attempts are counted in memory; from the fourth failure on, each attempt first waits
+2^(n−3) seconds (max 30 s) in addition to the Argon2id cost. This only slows down someone typing at the keyboard;
+it is not a defence against an offline attacker (who needs the Secret Key anyway).
+
 ### 7.5 Lock
 Drop VMK and all subkeys (`SecureBytes` zeroised, `SymmetricKey` zeroised by CryptoKit), drop the decrypted
 item cache and tier-2 plaintext, clear the clipboard if it still holds our last copy, tear down the unlocked UI.
@@ -348,7 +371,11 @@ item cache and tier-2 plaintext, clear the clipboard if it still holds our last 
 - Enabled only while unlocked. Requires `LAContext.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)`.
 - A **second** SE P-256 key is created with `[.privateKeyUsage, .biometryCurrentSet]`. The VMK (with the 32-byte
   zero commitment prefix) is wrapped to it with HPKE (`info = "privatevault/v1/hpke/bio-wrap-vmk" ‖ vaultID`,
-  `aad = 0x02 ‖ vaultID ‖ generation u32be`) and stored in the Keychain together with the SE key blob.
+  `aad = 0x02 ‖ vaultID ‖ header_sha256`) and stored in the Keychain together with the SE key blob. Binding the
+  header checksum means a header modified behind the app's back (salt, KDF parameters, wrapped VMK) makes the
+  Touch ID path refuse instead of silently unlocking; after every legitimate header rewrite the blob is re-created
+  under a **fresh** Secure-Enclave key (never re-wrapped to a public key read back from the store, which a local
+  attacker could have substituted).
 - Unlocking: the Secure Enclave refuses to use the key until Touch ID succeeds — the biometric check is enforced
   by the SEP, not by app code. `LAContext` is configured with `localizedFallbackTitle = ""` (no password button:
   the fallback is the Master Password field) and `touchIDAuthenticationAllowableReuseDuration = 0`.
@@ -400,8 +427,8 @@ exist at any point.
 
 - **Logging**: `SecureLog` accepts only `StaticString` messages and a small set of non-secret typed values
   (enums, counts, error codes). Strings, models and errors with payloads cannot be logged. A test exercises all
-  flows with sentinel secrets and asserts they never appear in `OSLogStore` or the in-memory sink. Assertions
-  never interpolate values.
+  flows with sentinel secrets and asserts they never appear in the in-memory log sink (every `SecureLog` line
+  goes through it before reaching `os.Logger`). Assertions never interpolate values.
 - **Crash reports**: macOS `.ips` crash logs contain register/stack snippets and the fault message. We never put
   secrets in fault messages; `RLIMIT_CORE` is set to 0 so no core dump is written. Process memory while unlocked
   is, by definition, readable by a debugger or by malware running as the user — see `THREAT_MODEL.md`.

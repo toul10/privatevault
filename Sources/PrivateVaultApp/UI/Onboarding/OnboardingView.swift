@@ -13,6 +13,7 @@ struct OnboardingView: View {
     @State private var error: String?
     @State private var kitCheck = ""
     @State private var kitConfirmed = false
+    @State private var kitSaved: String?
     @State private var restorePassword = ""
     @State private var restoreKit = ""
     @State private var restoreData: Data?
@@ -96,8 +97,10 @@ struct OnboardingView: View {
             RecoveryKitView(kit: kit)
             HStack {
                 Button("Save as text file…") { saveKit(kit) }
+                if let kitSaved { Text(kitSaved).font(.callout).foregroundStyle(.green) }
                 Spacer()
             }
+            ErrorBanner(message: error)
             Divider()
             Text("To continue, type the LAST group of the kit (the 5 characters after the final dash) to confirm you wrote it down:").font(.callout)
             HStack {
@@ -118,8 +121,11 @@ struct OnboardingView: View {
         panel.message = "WARNING: this file is as sensitive as your vault. Store it offline (USB stick in a safe), never in cloud storage."
         if panel.runModal() == .OK, let url = panel.url {
             let text = "PrivateVault Recovery Kit\n\nSecret Key:\n\(kit)\n\nKeep this together with your memory of the Master Password. Both are required to open your vault on another Mac or from a backup. There is no other way to recover the vault.\n"
-            try? text.write(to: url, atomically: true, encoding: .utf8)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            do {
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                kitSaved = "Saved to \(url.lastPathComponent) — store it offline."
+            } catch { self.error = "Could not write the file. Write the kit down by hand." }
         }
     }
 

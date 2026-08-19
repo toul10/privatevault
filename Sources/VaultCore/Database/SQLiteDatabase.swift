@@ -25,7 +25,7 @@ final class SQLiteDatabase {
             throw VaultError.storage("open failed \(rc)")
         }
         db = h
-        _ = pv_sqlite_set_defensive(UnsafeMutableRawPointer(h))
+        guard pv_sqlite_set_defensive(UnsafeMutableRawPointer(h)) == SQLITE_OK else { sqlite3_close_v2(h); throw VaultError.storage("defensive mode") }
         sqlite3_busy_timeout(h, 5000)
         try exec("PRAGMA secure_delete = ON")
         try exec("PRAGMA journal_mode = DELETE")

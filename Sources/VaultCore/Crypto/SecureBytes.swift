@@ -15,9 +15,17 @@ public final class SecureBytes: @unchecked Sendable, CustomStringConvertible, Cu
     public init(count: Int) {
         precondition(count >= 0)
         self.count = count
-        buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: max(count, 1), alignment: 16)
+        // One private page per buffer: mlock/munlock are page-granular and not reference counted, so sharing a
+        // page between two SecureBytes would let one deinit unpin the other.
+        let page = Int(getpagesize())
+        let bytes = max(count, 1)
+        let size = ((bytes + page - 1) / page) * page
+        var raw: UnsafeMutableRawPointer? = nil
+        let rc = posix_memalign(&raw, page, size)
+        precondition(rc == 0 && raw != nil, "allocation failed")
+        buffer = UnsafeMutableRawBufferPointer(start: raw, count: size)
         buffer.initializeMemory(as: UInt8.self, repeating: 0)
-        locked = count > 0 && pv_mlock(buffer.baseAddress, count)
+        locked = count > 0 && pv_mlock(buffer.baseAddress, size)
     }
     public convenience init(copying data: Data) {
         self.init(count: data.count)
@@ -36,8 +44,8 @@ public final class SecureBytes: @unchecked Sendable, CustomStringConvertible, Cu
     }
     deinit {
         pv_memzero(buffer.baseAddress, buffer.count)
-        if locked { _ = pv_munlock(buffer.baseAddress, count) }
-        buffer.deallocate()
+        if locked { _ = pv_munlock(buffer.baseAddress, buffer.count) }
+        free(buffer.baseAddress)
     }
     public func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
         try body(UnsafeRawBufferPointer(start: buffer.baseAddress, count: count))

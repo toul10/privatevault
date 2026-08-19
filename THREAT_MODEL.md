@@ -14,7 +14,7 @@ universal recovery key.
 | **Root key material** | Master Password (MP), Secret Key (SK), Recovery Kit, VMK / KEK / subkeys | MP: user's memory only, never stored. SK: Secure-Enclave-wrapped in the Keychain + on paper (§2.4, §8.1). VMK and subkeys: process memory only while unlocked, in `SecureBytes` / `SymmetricKey` (§7.5, §10). |
 | **Tier 2** | Wallet seed phrases, wallet private keys | Inner AEAD box under `tier2Key` (AAD `"tier2" ‖ vaultID ‖ recordID ‖ fieldName`) *inside* the encrypted record (§4.4). Stays ciphertext in memory until **Reveal**, which needs system authentication and auto-hides after 30 s (§8.3). |
 | **Tier 1** | Login passwords, API keys/secrets, recovery codes, secure-note bodies, wallet notes / derivation path | Record envelope: AES-256-GCM under a per-record key derived from `recordRootKey` (§4.2). In memory only while unlocked. |
-| **Encrypted metadata** | Item type, title, website, username, tags, favourite, timestamps, public addresses, blockchain | Inside the same ciphertext; padded to size buckets (§4.1, §4.3). A file thief cannot tell a wallet from a login. |
+| **Encrypted metadata** | Item type, title, website, username, tags, favourite, timestamps, public addresses, blockchain | Inside the same ciphertext; every ordinary record pads to one 4 KiB bucket (§4.1, §4.3), so a file thief cannot tell a wallet from a login by size. |
 | **Visible metadata** (accepted leak) | Record count, random record ids, `crypto_version`, revision counters, padded size class, vault UUID, *vault* creation time (record timestamps are encrypted), format version, generation, KDF parameters + salt, `sk_id`, `header_sha256`, `state_mac`, `wrapped_VMK` (ciphertext) | Plaintext by design; none of it helps decrypt anything (§11). |
 
 Tier 2 is a *handling* distinction (shorter plaintext lifetime, extra gate), not a separate trust boundary:
@@ -147,7 +147,7 @@ risk) · **Mechanism** (the concrete control in the spec).
 - **Gets**: unified log entries, `.ips` crash reports, swap pages, core files.
 - **Stopped by**: `SecureLog` accepts only `StaticString` messages and non-secret typed values — a `String` cannot be
   logged; assertions never interpolate values; `RLIMIT_CORE = 0`; macOS swap is encrypted; a test asserts sentinel
-  secrets never appear in `OSLogStore` (§10).
+  secrets never appear in the log sink (§10).
 - **Residual**: a crash report holds register/stack snippets; Swift `String`/`Data` copies used by the UI cannot all be
   zeroised (section 4 below, spec §10). Keys themselves live in `SecureBytes` (`mlock` + `memset_s`) or CryptoKit
   `SymmetricKey`.
@@ -157,11 +157,11 @@ risk) · **Mechanism** (the concrete control in the spec).
 
 | Attack | Detected / prevented by |
 |---|---|
-| Edit or truncate a record blob (nonce, ciphertext, tag) | AES-GCM tag → `VaultError.authenticationFailed` for that record (§4.2) |
+| Edit or truncate a record blob (nonce, ciphertext, tag) | AES-GCM tag fails for that record → it is quarantined (hidden, excluded from backups, purgeable) and the user is warned; the rest of the vault opens normally. If every record fails the unlock is refused (§4.2, §5.3) |
 | Swap blobs between two record ids; move a record to another vault | `recordID` and `vaultID` in the AAD `"record" ‖ vaultID ‖ recordID ‖ crypto_version ‖ revision` (§4.2) |
 | Restore an older *authentic* version of one record | `revision` in AAD + `state_mac` mismatch → warning "vault modified outside PrivateVault or rolled back" (§5.3) |
 | Delete or add rows outside the app | `state_mac` covers count and the sorted (id, revision) list, rewritten in the same transaction as every write (§5.3) |
-| Roll back the whole `vault.sqlite` to an older copy | Keychain mirror of last seen `generation` + `header_sha256`; lower generation → whole-file-rollback warning (a real Time Machine restore can be acknowledged) (§5.3) |
+| Roll back the whole `vault.sqlite` to an older copy | Keychain mirror of last seen `generation`, `header_sha256` and `state_mac` (updated on every write): lower generation → "generation rollback"; same generation but different `state_mac` → "file rollback" warning (a real Time Machine restore can be acknowledged). No baseline exists on a brand-new Mac (§5.3) |
 | Modify the header; **downgrade Argon2id parameters**; change salt, vaultID, pw_norm, wrap_alg | The canonical header is the **AAD of `wrapped_VMK`** → unwrap fails closed with the same `authenticationFailed`; parameters are bounds-checked *before* any allocation (§2.3, §3.1, §3.2). `header_sha256` is UX only |
 | Replay an old authentic header (e.g. pre-password-change) | `generation` is in the canonical bytes and mirrored in the Keychain → warning. Honest limit: with the **old MP + SK** that header still opens the unchanged VMK unless keys were rotated (§7.3, §7.4) |
 | Backup: splice header of backup A with records of backup B; drop/add/roll back a record; alter `createdAt` | Encrypted manifest binds `header_sha256`, the exact record set with per-blob SHA-256, and `createdAt` in the AAD (§9) |
@@ -229,7 +229,7 @@ by someone who cannot decrypt, which is the at-rest threat model (§5.3).
 | Metadata leakage from the file | Only id/crypto_version/revision in plaintext; padding; `WITHOUT ROWID`; `secure_delete`; `journal_mode = DELETE`; `auto_vacuum = FULL`; `VACUUM`; `.noindex`; 0700/0600 | `Vault/` (VaultStore), `Crypto/` (envelope) |
 | Backup splicing / record rollback | Encrypted manifest over header hash + record set + `createdAt`; bounds before parse; atomic restore, no plaintext temp files | `Backup/` (BackupCodec, BackupManifest) |
 | Tier-2 exposure in memory / on screen | Inner AEAD box under `tier2Key`, opened only on gated Reveal, 30 s auto-hide, dropped on lock | `Crypto/`, `Vault/` (item cache), app-layer gates |
-| Logs, crash reports, core dumps | `SecureLog` (`StaticString` only), no value interpolation in assertions, `RLIMIT_CORE = 0`, `OSLogStore` sentinel test | `Logging/` (SecureLog), `Security/` |
+| Logs, crash reports, core dumps | `SecureLog` (`StaticString` only), no value interpolation in assertions, `RLIMIT_CORE = 0`, log-sink sentinel test | `Logging/` (SecureLog), `Security/` |
 | Key material lingering in RAM / swap | `SecureBytes` (`mlock` + `memset_s` via `CSecureMemory`), `SymmetricKey`, Lock drops everything | `Crypto/` (SecureBytes), `Sources/CSecureMemory` |
 | Clipboard leakage | `.currentHostOnly`, `ConcealedType` + `TransientType`, change-count-guarded clear on timeout/lock/quit/sleep | `Security/` (pasteboard helper), app layer |
 | Plaintext on disk from the app layer / accidental serialisation | No window restoration or `@SceneStorage`, non-sensitive `UserDefaults` only, text-input learning + Writing Tools off, no Spotlight/QuickLook; `Secret<T>` redacted and `Codable` only inside the vault blob codec | `Vault/` (Secret, VaultItem), `Sources/PrivateVaultApp`, container-scan test |

@@ -1,10 +1,24 @@
 import SwiftUI
 import AppKit
+import Carbon.HIToolbox
 import VaultCore
 
-/// NSTextView that routes Copy/Cut through SecureClipboard (concealed, auto-clearing) and refuses drag-out.
+/// NSTextView that routes Copy/Cut through SecureClipboard (concealed, auto-clearing), refuses drag-out and
+/// enables Secure Event Input while focused (keystrokes hidden from event taps, like a password field).
 final class SecretTextView: NSTextView {
     var secureCopy: ((String) -> Void)?
+    private var secureInputEnabled = false
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok && !secureInputEnabled { EnableSecureEventInput(); secureInputEnabled = true }
+        return ok
+    }
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok && secureInputEnabled { DisableSecureEventInput(); secureInputEnabled = false }
+        return ok
+    }
+    deinit { if secureInputEnabled { DisableSecureEventInput() } }
     private var selectedText: String? {
         let r = selectedRange()
         guard r.length > 0, let s = (string as NSString?)?.substring(with: r) else { return nil }
@@ -123,9 +137,15 @@ struct PlainSecretTextField: NSViewRepresentable {
             guard let f = n.object as? NSTextField else { return }
             parent.text = f.stringValue
         }
+        private var secureInputEnabled = false
         func controlTextDidBeginEditing(_ n: Notification) {
             if let f = n.object as? NSTextField, let editor = f.currentEditor() as? NSTextView { PlainSecretTextField.harden(editor) }
+            if !secureInputEnabled { EnableSecureEventInput(); secureInputEnabled = true }
         }
+        func controlTextDidEndEditing(_ n: Notification) {
+            if secureInputEnabled { DisableSecureEventInput(); secureInputEnabled = false }
+        }
+        deinit { if secureInputEnabled { DisableSecureEventInput() } }
     }
 }
 
@@ -148,7 +168,7 @@ struct SecretRow: View {
                             .textSelection(.disabled)   // copying goes through SecureClipboard only (Copy button)
                             .accessibilityProtectedContent()
                     } else {
-                        Text(value.isEmpty ? "—" : String(repeating: "•", count: min(max(value.count, 8), 24)))
+                        Text(value.isEmpty ? "—" : String(repeating: "•", count: 12))   // fixed: never reveals the length
                             .font(.system(.body, design: .monospaced)).foregroundStyle(.secondary)
                     }
                 }

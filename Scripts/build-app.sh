@@ -10,6 +10,9 @@ if [[ "${1:-}" == "--debug" ]]; then CONFIG=debug; ENT=Packaging/PrivateVault-de
 APP=dist/PrivateVault.app
 BIN=.build/$CONFIG/PrivateVaultApp
 
+if [[ "$(git config core.hooksPath 2>/dev/null)" != ".githooks" ]]; then
+  echo "NOTE: pre-commit secret scan is not active in this clone. Run: git config core.hooksPath .githooks"
+fi
 echo "▸ Building ($CONFIG)…"
 swift build -c "$CONFIG" --product PrivateVaultApp 2>&1 | grep -E "error|warning: unre|Compiling|Build complete|Linking" | tail -5
 
@@ -29,6 +32,7 @@ if otool -L "$APP/Contents/MacOS/PrivateVault" | grep -q "@rpath/libswiftCompati
   mkdir -p "$APP/Contents/Frameworks"
   cp /Library/Developer/CommandLineTools/usr/lib/swift-6.2/macosx/libswiftCompatibilitySpan.dylib "$APP/Contents/Frameworks/"
   install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/PrivateVault"
+  codesign --force --sign - --options runtime "$APP/Contents/Frameworks/libswiftCompatibilitySpan.dylib"
 fi
 
 echo "▸ Signing (ad-hoc, hardened runtime, sandbox)…"

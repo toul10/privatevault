@@ -10,14 +10,14 @@ public enum SecureLog {
 
     /// Non-secret values that may accompany a message.
     public enum Value: Sendable, CustomStringConvertible {
-        case int(Int), bool(Bool), code(Int32), count(Int), category(String)
+        case int(Int), bool(Bool), code(Int32), count(Int), category(StaticString)
         public var description: String {
             switch self {
             case .int(let v): return String(v)
             case .bool(let b): return b ? "true" : "false"
             case .code(let c): return "code=\(c)"
             case .count(let c): return "count=\(c)"
-            case .category(let s): return s
+            case .category(let s): return "\(s)"
             }
         }
     }
@@ -43,8 +43,7 @@ public enum SecureLog {
     public static func error(_ category: Category, _ message: StaticString, _ values: Value...) { emit(.error, category, message, values) }
     /// Log a VaultError by its case name only.
     public static func error(_ category: Category, _ message: StaticString, error: Error) {
-        let name: String
-        if let v = error as? VaultError { name = v.caseName } else { name = "other" }
+        let name: StaticString = (error as? VaultError)?.caseName ?? "other"
         emit(.error, category, message, [.category(name)])
     }
 
@@ -70,7 +69,7 @@ public final class LogSink: @unchecked Sendable {
 }
 
 extension VaultError {
-    public var caseName: String {
+    public var caseName: StaticString {
         switch self {
         case .authenticationFailed: return "authenticationFailed"
         case .invalidHeader: return "invalidHeader"

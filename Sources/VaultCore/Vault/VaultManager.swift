@@ -14,8 +14,16 @@ public actor VaultManager {
     /// Consecutive failed password attempts (in-process throttle against someone at the keyboard).
     private var failedAttempts = 0
 
-    public init(vaultURL: URL, deviceKeys: DeviceKeyStore, kdfPolicy: KDFParameters = .current) {
-        self.vaultURL = vaultURL; self.deviceKeys = deviceKeys; self.kdfPolicy = kdfPolicy
+    /// Tests may pass weak parameters; production code cannot (the floor is enforced in `createVault` and upgrades).
+    private let allowWeakKDF: Bool
+
+    public init(vaultURL: URL, deviceKeys: DeviceKeyStore, kdfPolicy: KDFParameters = .current, allowWeakKDFForTesting: Bool = false) {
+        self.vaultURL = vaultURL; self.deviceKeys = deviceKeys; self.kdfPolicy = kdfPolicy; self.allowWeakKDF = allowWeakKDFForTesting
+    }
+    private func effectivePolicy() throws -> KDFParameters {
+        if allowWeakKDF { return kdfPolicy }
+        guard kdfPolicy.meetsFloor, kdfPolicy.isWithinHardBounds else { throw VaultError.invalidInput("KDF policy below the security floor") }
+        return kdfPolicy
     }
 
     public nonisolated var vaultExists: Bool { VaultStore.exists(at: vaultURL) }
@@ -35,7 +43,7 @@ public actor VaultManager {
         try MasterPasswordPolicy.validate(password)
         let pw = try PasswordNormalization.normalize(password)
         defer { pw.wipe() }
-        let header = VaultHeader.new(kdf: kdfPolicy)
+        let header = VaultHeader.new(kdf: try effectivePolicy())
         let sk = SecretKey.generate()
         let vmk = KeyHierarchy.generateVMK()
         let kek = try KeyHierarchy.deriveKEK(password: pw, secretKey: sk, header: header)
@@ -213,7 +221,7 @@ public actor VaultManager {
                               stateEntries: [(id: UUID, revision: UInt64)]?) async throws -> (VaultHeader, StoredHeader) {
         var newHeader = header
         newHeader.salt = SecureRandom.bytes(Argon2id.saltLength)
-        newHeader.kdf = header.kdf.upgraded(to: kdfPolicy)   // never lowers a dimension
+        newHeader.kdf = header.kdf.upgraded(to: try effectivePolicy())   // never lowers a dimension
         newHeader.generation &+= 1
         let kek = try KeyHierarchy.deriveKEK(password: password, secretKey: secretKey, header: newHeader)
         let wrapped = try KeyHierarchy.wrapVMK(keys.vmk, kek: kek, header: newHeader)
@@ -255,7 +263,7 @@ public actor VaultManager {
     private func rotate(session: VaultSession, store: VaultStore, password: SecureBytes, secretKey: SecretKey, header: VaultHeader) async throws {
         var newHeader = header
         newHeader.salt = SecureRandom.bytes(Argon2id.saltLength)
-        newHeader.kdf = header.kdf.upgraded(to: kdfPolicy)
+        newHeader.kdf = header.kdf.upgraded(to: try effectivePolicy())
         newHeader.generation &+= 1
         let newVMK = KeyHierarchy.generateVMK()
         let newKeys = try VaultKeys(vaultID: header.vaultID, vmk: newVMK)
