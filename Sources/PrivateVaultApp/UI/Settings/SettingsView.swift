@@ -66,6 +66,11 @@ struct SecuritySettings: View {
                     Text("Touch ID releases the vault key from the Secure Enclave. Your Master Password is never stored. Adding or removing a fingerprint disables Touch ID unlock until you re-enable it.").font(.caption).foregroundStyle(.secondary)
                 }
             }
+            Section("Revealing secrets") {
+                @Bindable var settings = model.settings
+                Toggle("Require Touch ID (or login password) to reveal or copy passwords, API keys, notes and recovery codes", isOn: $settings.requireAuthForSecrets)
+                Text("After a successful Touch ID, further reveals/copies within 30 seconds do not prompt again. Wallet seed phrases and private keys always require authentication.").font(.caption).foregroundStyle(.secondary)
+            }
             Section("Master Password & keys") {
                 Button("Change Master Password…") { sheet = .changePassword }
                 Button("Show Recovery Kit…") { sheet = .showKit }

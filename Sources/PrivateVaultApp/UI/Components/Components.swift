@@ -158,6 +158,7 @@ struct SecretRow: View {
     var multiline = false
     var monospaced = true
     @State private var revealed = false
+    @State private var error: String?
 
     var body: some View {
         LabeledContent {
@@ -175,13 +176,20 @@ struct SecretRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(multiline ? nil : 1)
                 if !value.isEmpty {
-                    Button { revealed.toggle() } label: { Image(systemName: revealed ? "eye.slash" : "eye") }
+                    Button { Task { await toggleReveal() } } label: { Image(systemName: revealed ? "eye.slash" : "eye") }
                         .buttonStyle(.borderless).help(revealed ? "Hide" : "Reveal")
-                    CopyButton(value: value, itemID: itemID)
+                    CopyButton(value: value, itemID: itemID, sensitive: true)
                 }
             }
         } label: { Text(label) }
         .onDisappear { revealed = false }
+        .overlay(alignment: .bottomLeading) { if let error { Text(error).font(.caption2).foregroundStyle(.red) } }
+    }
+    private func toggleReveal() async {
+        if revealed { revealed = false; return }
+        do { try await model.authorizeSecretAccess(reason: "Reveal \(label.lowercased())"); revealed = true; error = nil }
+        catch VaultError.userCancelled { }
+        catch { self.error = describe(error) }
     }
 }
 
@@ -191,11 +199,18 @@ struct CopyButton: View {
     let value: String
     var itemID: UUID? = nil
     var label: String? = nil
+    /// Sensitive values go through the Touch ID gate (if enabled) before reaching the clipboard.
+    var sensitive: Bool = false
     @State private var copiedAt: Date? = nil
     var body: some View {
         Button {
-            model.copySecret(value, itemID: itemID)
-            copiedAt = Date()
+            Task {
+                if sensitive {
+                    do { try await model.authorizeSecretAccess(reason: "Copy a stored secret") } catch { return }
+                }
+                model.copySecret(value, itemID: itemID)
+                copiedAt = Date()
+            }
         } label: {
             if let label { Label(label, systemImage: "doc.on.doc") } else { Image(systemName: copiedAt == nil ? "doc.on.doc" : "checkmark") }
         }

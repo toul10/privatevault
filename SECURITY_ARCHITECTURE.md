@@ -390,7 +390,8 @@ item cache and tier-2 plaintext, clear the clipboard if it still holds our last 
 
 | Action | Gate |
 |---|---|
-| Reveal / copy seed phrase or private key | `LAContext.evaluatePolicy(.deviceOwnerAuthentication)` (Touch ID or login password) + explicit warning; auto-hide after 30 s |
+| Reveal / copy seed phrase or private key | `LAContext.evaluatePolicy(.deviceOwnerAuthentication)` (Touch ID or login password) on every reveal + explicit warning; auto-hide after 30 s |
+| Reveal / copy passwords, API keys/secrets, notes, recovery codes | Same system authentication, with a 30 s grace period after success (setting "Require Touch ID for secrets", default on; reset on lock) |
 | Show Recovery Kit, change password, rotate keys, regenerate Secret Key, disable Touch ID, export backup, delete vault | Re-enter Master Password |
 
 These gates protect against shoulder-surfing and a briefly unattended unlocked Mac. They are enforced by the app,

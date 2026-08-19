@@ -113,6 +113,7 @@ final class AppModel {
     }
     func lock() async {
         autoLock.disarm()
+        lastSecretAuth = nil
         clipboard.clearIfStillOurs(); clipboardClearAt = nil
         items = []            // drop plaintext from the UI model before anything else
         integrityWarnings = []
@@ -161,6 +162,16 @@ final class AppModel {
     }
 
     // MARK: secrets to the user
+    static let secretAuthGrace: TimeInterval = 30
+    private var lastSecretAuth: Date?
+    /// Tier-1 gate (passwords, API keys, notes, recovery codes): Touch ID / login password unless authenticated
+    /// within the last 30 s. Disabled by the "Require Touch ID for secrets" setting. UI/policy gate (§8.3).
+    func authorizeSecretAccess(reason: String = "Show a stored secret") async throws {
+        guard settings.requireAuthForSecrets else { return }
+        if let t = lastSecretAuth, Date().timeIntervalSince(t) < Self.secretAuthGrace { return }
+        try await authenticator.authenticate(reason: reason)
+        lastSecretAuth = Date()
+    }
     /// Explicit user copy. Schedules the auto-clear.
     func copySecret(_ value: String, itemID: UUID?) {
         clipboardClearAt = clipboard.copy(value)
