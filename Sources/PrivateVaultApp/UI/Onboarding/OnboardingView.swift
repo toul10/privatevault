@@ -128,12 +128,13 @@ struct OnboardingView: View {
             }
             MasterPasswordField(title: "Master Password", text: $restorePassword)
             TextField("Recovery Kit (PV1-…)", text: $restoreKit).textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced)).autocorrectionDisabled()
+            Text("The Recovery Kit can be left empty only if this Mac still holds the vault's Secret Key (e.g. after reinstalling the app).").font(.caption).foregroundStyle(.secondary)
             ErrorBanner(message: error)
             HStack {
                 Button("Back") { step = .welcome }
                 Spacer()
                 Button(busy ? "Restoring…" : "Restore") { Task { await doRestore() } }
-                    .buttonStyle(.borderedProminent).disabled(busy || restoreData == nil || restorePassword.isEmpty || restoreKit.isEmpty)
+                    .buttonStyle(.borderedProminent).disabled(busy || restoreData == nil || restorePassword.isEmpty)
             }
         }
     }
@@ -148,7 +149,7 @@ struct OnboardingView: View {
     private func doRestore() async {
         guard let data = restoreData else { return }
         busy = true; error = nil
-        do { try await model.restoreBackup(data, password: restorePassword, recoveryKit: restoreKit); restorePassword = ""; restoreKit = "" }
+        do { try await model.restoreBackup(data, password: restorePassword, recoveryKit: restoreKit.isEmpty ? nil : restoreKit); restorePassword = ""; restoreKit = "" }
         catch { self.error = describe(error) }
         busy = false
     }

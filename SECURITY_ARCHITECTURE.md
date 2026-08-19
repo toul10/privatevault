@@ -114,7 +114,8 @@ Secret Key through HKDF (not XOR) so no linear relation between the two inputs e
 
 - `SK` = 32 bytes from the OS CSPRNG, generated once per vault.
 - `sk_id` = first 4 bytes of `HKDF-SHA256(IKM=SK, salt=vaultID, info="privatevault/v1/sk-id")` — a non-secret
-  identifier stored in the header and printed on the Recovery Kit so the user can match kit ↔ vault.
+  identifier stored in the header (and in every backup); when a typed Recovery Kit does not match it the app says
+  "this Recovery Kit does not belong to this vault" instead of reporting a wrong password.
 - **Recovery Kit string** (`RecoveryKit.swift`):
   `PV1-XXXXX-XXXXX-…` = literal prefix `PV1-`, then 52 data characters + 3 check characters in Crockford Base32
   (alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`) grouped in 11 groups of 5 separated by `-`.

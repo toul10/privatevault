@@ -50,8 +50,13 @@ final class AppModel {
         }
         self.lockTriggers = LockTriggers(controller: autoLock)
         self.biometricAvailable = authenticator.biometryAvailable && enclave.isAvailable
+        // Windows created later (Settings, sheets) must get the same capture policy.
+        windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyWindowSharing() }
+        }
         Task { await refreshPhase() }
     }
+    private var windowObserver: Any?
 
     // MARK: phase
     func refreshPhase() async {

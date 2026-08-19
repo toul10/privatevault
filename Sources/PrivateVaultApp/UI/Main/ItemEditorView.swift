@@ -31,6 +31,8 @@ struct ItemEditorView: View {
     @State private var privInput = ""
     @State private var keepSeed = true
     @State private var keepPriv = true
+    @State private var removeSeed = false
+    @State private var removePriv = false
     @State private var existingSeed: Tier2Value?
     @State private var existingPriv: Tier2Value?
     // note
@@ -109,26 +111,35 @@ struct ItemEditorView: View {
             TextField("Derivation path (optional)", text: $derivation).autocorrectionDisabled().font(.system(.body, design: .monospaced))
         }
         Section {
-            tier2Editor(label: "Seed phrase / mnemonic", existing: existingSeed, keep: $keepSeed, text: $seedInput)
-            tier2Editor(label: "Private key", existing: existingPriv, keep: $keepPriv, text: $privInput)
+            tier2Editor(label: "Seed phrase / mnemonic", existing: existingSeed, keep: $keepSeed, remove: $removeSeed, text: $seedInput)
+            tier2Editor(label: "Private key", existing: existingPriv, keep: $keepPriv, remove: $removePriv, text: $privInput)
         } header: { Label("Highest sensitivity", systemImage: "exclamationmark.shield") } footer: {
             Text("Stored encrypted twice (record + inner box). PrivateVault never validates, derives or uses these values — it only stores them.").font(.caption).foregroundStyle(.secondary)
         }
         Section("Notes") { PlainSecretTextEditor(text: $notes, monospaced: false).frame(minHeight: 60) }
     }
-    @ViewBuilder private func tier2Editor(label: String, existing: Tier2Value?, keep: Binding<Bool>, text: Binding<String>) -> some View {
+    @ViewBuilder private func tier2Editor(label: String, existing: Tier2Value?, keep: Binding<Bool>, remove: Binding<Bool>, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label).font(.body.weight(.medium))
             if existing != nil && keep.wrappedValue {
                 HStack {
                     Text("•••••••• (stored, encrypted)").foregroundStyle(.secondary).font(.system(.body, design: .monospaced))
                     Spacer()
-                    Button("Replace") { keep.wrappedValue = false }
-                    Button("Remove", role: .destructive) { keep.wrappedValue = false; text.wrappedValue = "" }
+                    Button("Replace") { keep.wrappedValue = false; remove.wrappedValue = false }
+                    Button("Remove", role: .destructive) { keep.wrappedValue = false; remove.wrappedValue = true; text.wrappedValue = "" }
+                }
+            } else if existing != nil && remove.wrappedValue {
+                HStack {
+                    Text("Will be removed on save").foregroundStyle(.red)
+                    Spacer()
+                    Button("Keep existing value") { keep.wrappedValue = true; remove.wrappedValue = false }
                 }
             } else {
                 PlainSecretTextEditor(text: text).frame(minHeight: 64)
-                if existing != nil { Button("Keep existing value") { keep.wrappedValue = true; text.wrappedValue = "" } }
+                if existing != nil {
+                    Text("Leave empty to keep the existing value.").font(.caption).foregroundStyle(.secondary)
+                    Button("Keep existing value") { keep.wrappedValue = true; text.wrappedValue = "" }
+                }
             }
         }
     }
@@ -158,14 +169,20 @@ struct ItemEditorView: View {
         case .login: return .login(LoginPayload(website: website.trimmingCharacters(in: .whitespaces), username: username.trimmingCharacters(in: .whitespaces), password: Secret(password), notes: Secret(notes)))
         case .apiCredential: return .apiCredential(APICredentialPayload(service: service, apiKey: Secret(apiKey), apiSecret: Secret(apiSecret), environment: environment, notes: Secret(notes)))
         case .wallet:
-            let seed: Tier2Value? = keepSeed ? existingSeed : (seedInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .plaintext(Secret(seedInput.trimmingCharacters(in: .whitespacesAndNewlines))))
-            let priv: Tier2Value? = keepPriv ? existingPriv : (privInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .plaintext(Secret(privInput.trimmingCharacters(in: .whitespacesAndNewlines))))
+            let seed = resolveTier2(existing: existingSeed, keep: keepSeed, remove: removeSeed, input: seedInput)
+            let priv = resolveTier2(existing: existingPriv, keep: keepPriv, remove: removePriv, input: privInput)
             return .wallet(WalletPayload(name: walletName, blockchain: chain, publicAddress: address.trimmingCharacters(in: .whitespaces), seedPhrase: seed, privateKey: priv, derivationPath: derivation, notes: Secret(notes)))
         case .secureNote: return .secureNote(SecureNotePayload(body: Secret(body_)))
         case .recoveryCodes:
             let list = codes.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             return .recoveryCodes(RecoveryCodesPayload(service: service, codes: Secret(list), notes: Secret(notes)))
         }
+    }
+    private func resolveTier2(existing: Tier2Value?, keep: Bool, remove: Bool, input: String) -> Tier2Value? {
+        if remove { return nil }
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if keep || (trimmed.isEmpty && existing != nil) { return existing }
+        return trimmed.isEmpty ? nil : .plaintext(Secret(trimmed))
     }
     private func save() async {
         busy = true; error = nil
