@@ -61,13 +61,12 @@ public actor VaultStore {
         let v = Int(raw[0])
         guard v >= 1 else { throw VaultError.corrupted("schema_version") }
         guard v <= Self.schemaVersion else { throw VaultError.unsupportedFormat(UInt8(truncatingIfNeeded: v)) }
-        // Future migrations: ordered list keyed by version, each in one transaction.
-        let migrations: [(Int, (SQLiteDatabase) throws -> Void)] = []
-        for (target, migrate) in migrations where target > v {
+        for m in SchemaMigrations.plan(from: v, to: Self.schemaVersion) {
             try db.transaction {
-                try migrate(db)
-                try db.run("UPDATE meta SET value = ? WHERE key = 'schema_version'") { $0.bind(1, Data([UInt8(target)])) }
+                try m.run(db)
+                try db.run("UPDATE meta SET value = ? WHERE key = 'schema_version'") { $0.bind(1, Data([UInt8(m.version)])) }
             }
+            SecureLog.notice(.storage, "schema migrated", .int(m.version))
         }
     }
 

@@ -14,6 +14,7 @@ fi
 rc=0
 # Forbidden file types
 for f in ${(f)files}; do
+  [[ "$f" == Tests/VaultCoreTests/Fixtures/golden-v1.* ]] && continue   # frozen format fixture with FAKE credentials
   case "$f" in
     *.sqlite|*.sqlite-wal|*.sqlite-shm|*.db|*.privatevault|*.p12|*.pem|*.key|*.mobileprovision)
       echo "BLOCKED: forbidden file type staged: $f"; rc=1;;
@@ -31,6 +32,7 @@ patterns=(
 )
 for f in ${(f)files}; do
   [[ -f "$f" ]] || continue
+  [[ "$f" == Tests/VaultCoreTests/Fixtures/* ]] && continue
   for p in "${patterns[@]}"; do
     if grep -I -E -n -- "$p" "$f" >/dev/null 2>&1; then
       echo "BLOCKED: pattern '$p' found in $f:"; grep -I -E -n -- "$p" "$f" | head -3

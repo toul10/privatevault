@@ -60,7 +60,8 @@ let package = Package(
         .testTarget(
             name: "VaultCoreTests",
             dependencies: ["VaultCore", "CArgon2"],
-            path: "Tests/VaultCoreTests"
+            path: "Tests/VaultCoreTests",
+            resources: [.copy("Fixtures")]
         ),
     ]
 )

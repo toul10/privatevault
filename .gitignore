@@ -29,3 +29,7 @@ Packaging/*.cer
 *.swp
 .vscode/
 .idea/
+
+# Frozen format fixtures (FAKE credentials, documented in Tests/VaultCoreTests/Vault/GoldenFixtureTests.swift)
+!Tests/VaultCoreTests/Fixtures/golden-v1.sqlite
+!Tests/VaultCoreTests/Fixtures/golden-v1.privatevault
