@@ -210,6 +210,24 @@ final class AppModel {
         try await session.purgeUnreadableRecords()
         integrityWarnings = await session.integrityWarnings
     }
+    enum EnvImportMode { case oneSecureNote, oneItemPerKey }
+    /// Imports a `.env`-style file chosen by the user. Plaintext exists only in memory until sealed into records.
+    func importDotEnv(text: String, fileName: String, mode: EnvImportMode) async throws -> Int {
+        guard session != nil else { throw VaultError.vaultLocked }
+        let base = (fileName as NSString).deletingPathExtension.isEmpty ? fileName : (fileName as NSString).deletingPathExtension
+        switch mode {
+        case .oneSecureNote:
+            try await save(VaultItem(title: base.isEmpty ? "Imported .env" : base, tags: ["env"], payload: .secureNote(SecureNotePayload(body: Secret(text)))))
+            return 1
+        case .oneItemPerKey:
+            let entries = DotEnvParser.parse(text)
+            guard !entries.isEmpty else { throw VaultError.invalidInput("No KEY=VALUE lines found in this file") }
+            for e in entries {
+                try await save(VaultItem(title: e.key, tags: ["env", base], payload: .apiCredential(APICredentialPayload(service: e.key, apiKey: Secret(e.value), environment: base))))
+            }
+            return entries.count
+        }
+    }
     func inspectBackup(_ data: Data) throws -> (createdAt: Date, recordCount: Int) {
         let r = try manager.inspectBackup(data)
         return (r.createdAt, r.recordCount)

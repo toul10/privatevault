@@ -104,3 +104,29 @@ struct PolicyTests {
         #expect(throws: Never.self) { try MasterPasswordPolicy.validate(TestEnv.password) }
     }
 }
+
+@Suite("dotenv parser")
+struct DotEnvParserTests {
+    @Test func parses_common_forms() {
+        let text = """
+        # comment
+        API_KEY=FAKE123
+        export SECRET_TOKEN="FAKE with spaces"
+        SINGLE='FAKE single'
+        EMPTY=
+        TRAILING=value # comment
+        URL=https://example.com/a?b=c#frag
+        bad line
+        =novalue
+        """
+        let e = DotEnvParser.parse(text)
+        #expect(e == [
+            .init(key: "API_KEY", value: "FAKE123"),
+            .init(key: "SECRET_TOKEN", value: "FAKE with spaces"),
+            .init(key: "SINGLE", value: "FAKE single"),
+            .init(key: "EMPTY", value: ""),
+            .init(key: "TRAILING", value: "value"),
+            .init(key: "URL", value: "https://example.com/a?b=c#frag"),
+        ])
+    }
+}

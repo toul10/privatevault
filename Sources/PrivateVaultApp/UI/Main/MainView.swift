@@ -21,6 +21,8 @@ struct MainView: View {
     @State private var query = ""
     @State private var editing: EditorTarget?
     @State private var showGenerator = false
+    @State private var envImport: EnvImportTarget?
+    struct EnvImportTarget: Identifiable { let id = UUID(); let text: String; let fileName: String }
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     struct EditorTarget: Identifiable { let id = UUID(); let item: VaultItem?; let kind: ItemKind }
@@ -49,6 +51,8 @@ struct MainView: View {
                     ForEach(ItemKind.allCases) { kind in
                         Button { editing = EditorTarget(item: nil, kind: kind) } label: { Label(kind.displayName, systemImage: kind.symbolName) }
                     }
+                    Divider()
+                    Button { chooseEnvFile() } label: { Label("Import .env file…", systemImage: "square.and.arrow.down") }
                 } label: { Label("New Item", systemImage: "plus") }
                 .help("Add a new item")
             }
@@ -69,11 +73,22 @@ struct MainView: View {
             .environment(model)
         }
         .sheet(isPresented: $showGenerator) { PasswordGeneratorView().environment(model) }
+        .sheet(item: $envImport) { t in EnvImportSheet(text: t.text, fileName: t.fileName).environment(model) }
         .onChange(of: model.items) { _, items in
             if let sel = selection, !items.contains(where: { $0.id == sel }) { selection = nil }
         }
     }
 
+    private func chooseEnvFile() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.message = "Choose a .env / key file. Its contents will be encrypted into the vault; the original file is NOT deleted."
+        guard panel.runModal() == .OK, let url = panel.url, let data = try? Data(contentsOf: url), data.count <= 1_000_000,
+              let text = String(data: data, encoding: .utf8) else { return }
+        envImport = EnvImportTarget(text: text, fileName: url.lastPathComponent)
+    }
     private var sidebar: some View {
         List(selection: $section) {
             Section("Vault") {
@@ -196,5 +211,40 @@ struct ItemListView: View {
         case .secureNote: return "Secure note"
         case .recoveryCodes(let p): return p.service
         }
+    }
+}
+
+
+struct EnvImportSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let text: String
+    let fileName: String
+    @State private var mode: AppModel.EnvImportMode = .oneItemPerKey
+    @State private var error: String?
+    @State private var busy = false
+    var body: some View {
+        let entries = DotEnvParser.parse(text)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Import “\(fileName)”").font(.title3.weight(.semibold))
+            Text("\(entries.count) KEY=VALUE lines found. Values are never shown here.").foregroundStyle(.secondary)
+            Picker("Import as", selection: $mode) {
+                Text("One API Credential per key (\(entries.count) items)").tag(AppModel.EnvImportMode.oneItemPerKey)
+                Text("One Secure Note with the whole file").tag(AppModel.EnvImportMode.oneSecureNote)
+            }.pickerStyle(.radioGroup)
+            if !entries.isEmpty && mode == .oneItemPerKey {
+                ScrollView { VStack(alignment: .leading, spacing: 2) { ForEach(entries, id: \.key) { Text($0.key).font(.system(.caption, design: .monospaced)) } } }.frame(maxHeight: 140)
+            }
+            Text("After importing, delete the original file (it is plaintext on disk) and empty the Trash. Copies may still exist in Time Machine backups.").font(.caption).foregroundStyle(.orange)
+            ErrorBanner(message: error)
+            HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(busy ? "Importing…" : "Import") { Task { await run() } }.buttonStyle(.borderedProminent).disabled(busy || (mode == .oneItemPerKey && entries.isEmpty)) }
+        }.padding(20).frame(width: 520)
+    }
+    private func run() async {
+        busy = true; error = nil
+        do { _ = try await model.importDotEnv(text: text, fileName: fileName, mode: mode); dismiss() }
+        catch { self.error = describe(error) }
+        busy = false
     }
 }
