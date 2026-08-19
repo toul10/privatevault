@@ -9,6 +9,7 @@ final class AppModel {
     enum Phase: Equatable {
         case loading
         case noVault          // onboarding
+        case recoveryKit      // vault just created: the kit MUST be shown/confirmed before the main UI appears
         case locked
         case unlocked
     }
@@ -24,6 +25,8 @@ final class AppModel {
     private(set) var biometricAvailable = false
     private(set) var biometricEnabled = false
     private(set) var secretKeyOnDevice = true
+    /// Set right after vault creation until the user confirms they saved the kit.
+    private(set) var pendingRecoveryKit: CreatedVault?
     var lastError: String?
     var clipboardClearAt: Date?
 
@@ -64,6 +67,7 @@ final class AppModel {
 
     // MARK: phase
     func refreshPhase() async {
+        if pendingRecoveryKit != nil { phase = .recoveryKit; return }
         if let session, await !session.isLocked { phase = .unlocked; return }
         phase = manager.vaultExists ? .locked : .noVault
         biometricEnabled = await manager.isBiometricUnlockEnabled()
@@ -71,12 +75,17 @@ final class AppModel {
     }
 
     // MARK: onboarding
-    struct CreatedVault { let recoveryKit: String; let secretKeyStoredOnDevice: Bool }
-    func createVault(password: String) async throws -> CreatedVault {
+    struct CreatedVault: Equatable { let recoveryKit: String; let secretKeyStoredOnDevice: Bool }
+    /// Creates the vault and parks the app in `.recoveryKit` until `confirmRecoveryKitSaved()`.
+    func createVault(password: String) async throws {
         let result = try await manager.createVault(password: password)
-        await adopt(session: result.session)
+        await adopt(session: result.session, phase: .recoveryKit)
+        pendingRecoveryKit = CreatedVault(recoveryKit: RecoveryKit.encode(result.secretKey), secretKeyStoredOnDevice: result.secretKeyStoredOnDevice)
         settings.hasCompletedOnboarding = true
-        return CreatedVault(recoveryKit: RecoveryKit.encode(result.secretKey), secretKeyStoredOnDevice: result.secretKeyStoredOnDevice)
+    }
+    func confirmRecoveryKitSaved() {
+        pendingRecoveryKit = nil
+        if session != nil { phase = .unlocked; applyWindowSharing() }
     }
 
     // MARK: unlock / lock
@@ -88,7 +97,7 @@ final class AppModel {
         let s = try await manager.unlockWithBiometrics(reason: "Unlock PrivateVault")
         await adopt(session: s)
     }
-    private func adopt(session s: VaultSession) async {
+    private func adopt(session s: VaultSession, phase newPhase: Phase = .unlocked) async {
         session = s
         integrityWarnings = await s.integrityWarnings
         await reloadItems()
@@ -96,7 +105,7 @@ final class AppModel {
         secretKeyOnDevice = await manager.secretKeyAvailableOnDevice()
         autoLock.update(policy: AutoLockPolicy(timeout: settings.autoLock))
         autoLock.arm()
-        phase = .unlocked
+        phase = newPhase
         applyWindowSharing()
     }
     func lock() async {
@@ -104,6 +113,7 @@ final class AppModel {
         clipboard.clearIfStillOurs(); clipboardClearAt = nil
         items = []            // drop plaintext from the UI model before anything else
         integrityWarnings = []
+        pendingRecoveryKit = nil
         await manager.lock()
         session = nil
         phase = manager.vaultExists ? .locked : .noVault
@@ -115,9 +125,9 @@ final class AppModel {
         clipboard.timeout = TimeInterval(settings.clipboardSeconds)
         applyWindowSharing()
     }
-    /// Block screen capture / screen sharing of our windows while unlocked (optional, default on).
+    /// Block screen capture / screen sharing of our windows whenever secrets can be on screen (optional, default on).
     func applyWindowSharing() {
-        let block = settings.blockScreenCapture && phase == .unlocked
+        let block = settings.blockScreenCapture && (phase == .unlocked || phase == .recoveryKit)
         for w in NSApp.windows { w.sharingType = block ? .none : .readOnly }
     }
 

@@ -21,8 +21,7 @@ struct LockView: View {
                     .onSubmit { Task { await unlock() } }
                 if needsKit || !model.secretKeyOnDevice {
                     VStack(alignment: .leading, spacing: 4) {
-                        TextField("Recovery Kit (PV1-…)", text: $recoveryKit)
-                            .textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced)).frame(width: 320).autocorrectionDisabled()
+                        PlainSecretTextField(placeholder: "Recovery Kit (PV1-…)", text: $recoveryKit, monospaced: true).frame(width: 320)
                         Text("Your Secret Key is not available on this Mac. Enter your Recovery Kit once; it will be stored again protected by the Secure Enclave.")
                             .font(.caption).foregroundStyle(.secondary).frame(width: 320)
                     }

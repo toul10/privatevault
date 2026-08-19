@@ -22,11 +22,15 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
             Group {
-                switch step {
-                case .welcome: welcome
-                case .password: createPassword
-                case .kit(let kit, let stored): showKit(kit, storedOnDevice: stored)
-                case .restore: restore
+                if let pending = model.pendingRecoveryKit {
+                    showKit(pending.recoveryKit, storedOnDevice: pending.secretKeyStoredOnDevice)
+                } else {
+                    switch step {
+                    case .welcome: welcome
+                    case .password: createPassword
+                    case .kit(let kit, let stored): showKit(kit, storedOnDevice: stored)
+                    case .restore: restore
+                    }
                 }
             }
             .frame(maxWidth: 560)
@@ -72,9 +76,8 @@ struct OnboardingView: View {
     private func create() async {
         busy = true; error = nil
         do {
-            let created = try await model.createVault(password: password)
+            try await model.createVault(password: password)   // model.pendingRecoveryKit drives the kit step
             password = ""; confirm = ""
-            step = .kit(created.recoveryKit, storedOnDevice: created.secretKeyStoredOnDevice)
         } catch { self.error = describe(error) }
         busy = false
     }
@@ -95,12 +98,11 @@ struct OnboardingView: View {
             Divider()
             Text("To continue, type the LAST group of the kit (the 5 characters after the final dash) to confirm you wrote it down:").font(.callout)
             HStack {
-                TextField("Last group", text: $kitCheck).textFieldStyle(.roundedBorder).frame(width: 120)
-                    .autocorrectionDisabled()
+                PlainSecretTextField(placeholder: "Last group", text: $kitCheck).frame(width: 120)
                     .onChange(of: kitCheck) { _, v in kitConfirmed = v.uppercased().trimmingCharacters(in: .whitespaces) == String(kit.suffix(5)) }
                 if kitConfirmed { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
                 Spacer()
-                Button("I saved my Recovery Kit — open vault") { Task { await model.refreshPhase() } }
+                Button("I saved my Recovery Kit — open vault") { kitCheck = ""; kitConfirmed = false; model.confirmRecoveryKitSaved() }
                     .buttonStyle(.borderedProminent).disabled(!kitConfirmed)
             }
         }
@@ -127,7 +129,7 @@ struct OnboardingView: View {
                 Text(restoreName.isEmpty ? "No file selected" : restoreName).foregroundStyle(.secondary)
             }
             MasterPasswordField(title: "Master Password", text: $restorePassword)
-            TextField("Recovery Kit (PV1-…)", text: $restoreKit).textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced)).autocorrectionDisabled()
+            PlainSecretTextField(placeholder: "Recovery Kit (PV1-…)", text: $restoreKit, monospaced: true)
             Text("The Recovery Kit can be left empty only if this Mac still holds the vault's Secret Key (e.g. after reinstalling the app).").font(.caption).foregroundStyle(.secondary)
             ErrorBanner(message: error)
             HStack {

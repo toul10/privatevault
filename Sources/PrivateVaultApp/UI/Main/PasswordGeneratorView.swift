@@ -14,7 +14,7 @@ struct PasswordGeneratorView: View {
             Text("Password Generator").font(.title2.weight(.semibold))
             HStack {
                 Text(generated.isEmpty ? " " : generated)
-                    .font(.system(.title3, design: .monospaced)).textSelection(.enabled).lineLimit(2)
+                    .font(.system(.title3, design: .monospaced)).textSelection(.disabled).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(10)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
                     .accessibilityProtectedContent()

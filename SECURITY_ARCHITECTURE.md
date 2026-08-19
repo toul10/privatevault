@@ -250,9 +250,13 @@ vault_header(id INTEGER PRIMARY KEY CHECK(id = 1), canonical BLOB, wrapped_vmk B
              header_sha256 BLOB, sk_id BLOB, state_mac BLOB)
 records(id BLOB PRIMARY KEY, crypto_version INTEGER NOT NULL, revision INTEGER NOT NULL, blob BLOB NOT NULL) WITHOUT ROWID
 ```
-Migrations are an ordered list keyed by `schema_version`, run in one transaction at open. Record envelopes carry
-their own `crypto_version`; a record migrator re-encrypts old envelopes lazily on write (tested with a synthetic
-v0 → v1 case).
+Schema migrations are an ordered, gapless list keyed by `schema_version` (`SchemaMigrations.plan`), each run in
+one transaction at open; a database with a *higher* schema version than the app knows is refused
+(`unsupportedFormat`). Record envelopes carry their own `crypto_version`; V1 supports exactly version 1 — a record
+with any other version makes the unlock fail (`unsupportedFormat`) rather than being silently skipped. When a
+future version 2 is introduced, `RecordCodec.open` will accept both and the session will re-seal v1 records at
+the current version on their next write; the committed golden fixture (`Tests/VaultCoreTests/Fixtures/golden-v1.*`)
+guarantees that v1 vaults and backups keep opening.
 
 ### 5.3 Authenticated vault state (rollback / deletion detection)
 

@@ -96,7 +96,18 @@ struct SecuritySettings: View {
 }
 
 /// Generic "enter your Master Password to confirm" sheet.
+/// Closes the sheet (and clears its state via view teardown) the moment the vault is no longer unlocked.
+struct DismissWhenLocked: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    func body(content: Content) -> some View {
+        content.onChange(of: model.phase) { _, p in if p != .unlocked { dismiss() } }
+    }
+}
+extension View { func dismissWhenLocked() -> some View { modifier(DismissWhenLocked()) } }
+
 struct PasswordPromptSheet: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let title: String
     let action: String
@@ -114,7 +125,7 @@ struct PasswordPromptSheet: View {
             ErrorBanner(message: error)
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(action) { Task { await run() } }.buttonStyle(.borderedProminent).tint(destructive ? .red : .accentColor).disabled(busy || password.isEmpty) }
-        }.padding(20).frame(width: 420)
+        }.padding(20).frame(width: 420).dismissWhenLocked()
     }
     private func run() async {
         busy = true; error = nil
@@ -147,7 +158,7 @@ struct ChangePasswordSheet: View {
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(busy ? "Working…" : "Change password") { Task { await run() } }.buttonStyle(.borderedProminent)
                     .disabled(busy || current.isEmpty || new.isEmpty || new != confirm) }
-        }.padding(20).frame(width: 460)
+        }.padding(20).frame(width: 460).dismissWhenLocked()
     }
     private func run() async {
         busy = true; error = nil
@@ -166,13 +177,20 @@ struct ShowKitSheet: View {
     @State private var kit: String?
     @State private var busy = false
     @State private var error: String?
+    @State private var hideAt: Date?
+    @State private var now = Date()
+    static let visibleSeconds: TimeInterval = 90
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(mode == .show ? "Recovery Kit" : "Regenerate Secret Key").font(.title3.weight(.semibold))
+            HStack {
+                Text(mode == .show ? "Recovery Kit" : "Regenerate Secret Key").font(.title3.weight(.semibold))
+                Spacer()
+                if let hideAt, kit != nil { Text("hides in \(max(0, Int(hideAt.timeIntervalSince(now).rounded(.up)))) s").font(.caption).foregroundStyle(.secondary) }
+            }
             if let kit {
                 RecoveryKitView(kit: kit)
                 if mode == .regenerate { Text("Your OLD Recovery Kit no longer works. Old backups stay readable only with the old kit + old password; make a new backup now.").font(.callout).foregroundStyle(.orange) }
-                HStack { Spacer(); Button("Done") { dismiss() }.buttonStyle(.borderedProminent) }
+                HStack { Spacer(); Button("Done") { self.kit = nil; dismiss() }.buttonStyle(.borderedProminent) }
             } else {
                 Text(mode == .show ? "Enter your Master Password to display the Recovery Kit." : "This creates a NEW Secret Key and re-encrypts the whole vault. Enter your Master Password to continue.")
                     .foregroundStyle(.secondary)
@@ -182,12 +200,21 @@ struct ShowKitSheet: View {
                     Button(busy ? "Working…" : (mode == .show ? "Show" : "Regenerate")) { Task { await run() } }.buttonStyle(.borderedProminent).disabled(busy || password.isEmpty) }
             }
         }.padding(20).frame(width: 520)
+        .dismissWhenLocked()
+        .task(id: hideAt) {
+            guard hideAt != nil else { return }
+            while let at = hideAt, !Task.isCancelled {
+                if Date() >= at { kit = nil; hideAt = nil; dismiss(); break }
+                try? await Task.sleep(for: .seconds(1)); now = Date()
+            }
+        }
     }
     private func run() async {
         busy = true; error = nil
         do {
             kit = mode == .show ? try await model.recoveryKit(password: password) : try await model.regenerateSecretKey(password: password)
             password = ""
+            hideAt = Date().addingTimeInterval(Self.visibleSeconds); now = Date()
         } catch { self.error = describe(error) }
         busy = false
     }
@@ -241,11 +268,11 @@ struct RestoreSheet: View {
             Text("The current vault on this Mac will be REPLACED by the backup. Items added since the backup was made will be lost.").foregroundStyle(.orange)
             HStack { Button("Choose backup file…") { choose() }; Text(name.isEmpty ? "No file selected" : name).foregroundStyle(.secondary) }
             SecureField("Master Password of the backup", text: $password).textFieldStyle(.roundedBorder)
-            TextField("Recovery Kit (only if the backup is from a different vault / Secret Key)", text: $kit).textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced)).autocorrectionDisabled()
+            PlainSecretTextField(placeholder: "Recovery Kit (only if the backup is from a different vault / Secret Key)", text: $kit, monospaced: true)
             ErrorBanner(message: error)
             HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(busy ? "Restoring…" : "Replace vault with backup") { Task { await run() } }.buttonStyle(.borderedProminent).tint(.red).disabled(busy || data == nil || password.isEmpty) }
-        }.padding(20).frame(width: 520)
+        }.padding(20).frame(width: 520).dismissWhenLocked()
     }
     private func choose() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [UTType(filenameExtension: BackupCodec.fileExtension) ?? .data, .data]

@@ -58,10 +58,10 @@ struct ItemDetailView: View {
         Section("Login") {
             if !p.website.isEmpty {
                 LabeledContent("Website") {
-                    HStack { Text(p.website).textSelection(.enabled).lineLimit(1); Spacer(); CopyButton(value: p.website, itemID: nil) }
+                    HStack { Text(p.website).textSelection(.disabled).lineLimit(1); Spacer(); CopyButton(value: p.website, itemID: nil) }
                 }
             }
-            LabeledContent("Username") { HStack { Text(p.username).textSelection(.enabled); Spacer(); CopyButton(value: p.username, itemID: item.id) } }
+            LabeledContent("Username") { HStack { Text(p.username).textSelection(.disabled); Spacer(); CopyButton(value: p.username, itemID: item.id) } }
             SecretRow(label: "Password", value: p.password.value, itemID: item.id)
             if !p.notes.value.isEmpty { SecretRow(label: "Notes", value: p.notes.value, itemID: item.id, multiline: true, monospaced: false) }
         }
@@ -80,7 +80,7 @@ struct ItemDetailView: View {
             LabeledContent("Name") { Text(p.name) }
             LabeledContent("Blockchain") { Text(p.blockchain.displayName) }
             if !p.publicAddress.isEmpty {
-                LabeledContent("Public address") { HStack { Text(p.publicAddress).font(.system(.body, design: .monospaced)).textSelection(.enabled).lineLimit(1); Spacer(); CopyButton(value: p.publicAddress, itemID: item.id) } }
+                LabeledContent("Public address") { HStack { Text(p.publicAddress).font(.system(.body, design: .monospaced)).textSelection(.disabled).lineLimit(1); Spacer(); CopyButton(value: p.publicAddress, itemID: item.id) } }
             }
             if !p.derivationPath.isEmpty { LabeledContent("Derivation path") { Text(p.derivationPath).font(.system(.body, design: .monospaced)) } }
             if !p.notes.value.isEmpty { SecretRow(label: "Notes", value: p.notes.value, itemID: item.id, multiline: true, monospaced: false) }
@@ -135,7 +135,7 @@ struct Tier2Row: View {
             if let revealed {
                 Text(revealed)
                     .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
+                    .textSelection(.disabled)   // use the Copy button (concealed, auto-clearing)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 6).fill(.red.opacity(0.07)))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(.red.opacity(0.5)))

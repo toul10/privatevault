@@ -7,7 +7,7 @@ struct RootView: View {
         Group {
             switch model.phase {
             case .loading: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .noVault: OnboardingView()
+            case .noVault, .recoveryKit: OnboardingView()
             case .locked: LockView()
             case .unlocked: MainView()
             }

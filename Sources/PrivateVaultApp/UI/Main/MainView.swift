@@ -140,6 +140,7 @@ struct ItemListView: View {
     let items: [VaultItem]
     @Binding var selection: UUID?
     @Binding var query: String
+    @State private var pendingDelete: VaultItem?
     var body: some View {
         List(items, selection: $selection) { item in
             HStack(spacing: 10) {
@@ -156,9 +157,12 @@ struct ItemListView: View {
             .contextMenu {
                 Button(item.favorite ? "Remove from Favorites" : "Add to Favorites") { Task { await model.toggleFavorite(item.id) } }
                 Divider()
-                Button("Delete…", role: .destructive) { Task { try? await model.delete(item.id) } }
+                Button("Delete…", role: .destructive) { pendingDelete = item }
             }
         }
+        .confirmationDialog("Delete “\(pendingDelete?.title ?? "")”?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
+            Button("Delete", role: .destructive) { if let p = pendingDelete { Task { try? await model.delete(p.id) } }; pendingDelete = nil }
+        } message: { Text("This cannot be undone.") }
         .searchable(text: $query, placement: .sidebar, prompt: "Search titles, usernames, sites, tags")
         .overlay {
             if items.isEmpty { ContentUnavailableView(query.isEmpty ? "No items yet" : "No matches", systemImage: query.isEmpty ? "plus.rectangle.on.folder" : "magnifyingglass") }

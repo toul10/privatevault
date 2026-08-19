@@ -2,13 +2,51 @@ import SwiftUI
 import AppKit
 import VaultCore
 
-/// Text entry for secrets: no autocorrect, no spell-check, no inline predictions, no Writing Tools.
+/// NSTextView that routes Copy/Cut through SecureClipboard (concealed, auto-clearing) and refuses drag-out.
+final class SecretTextView: NSTextView {
+    var secureCopy: ((String) -> Void)?
+    private var selectedText: String? {
+        let r = selectedRange()
+        guard r.length > 0, let s = (string as NSString?)?.substring(with: r) else { return nil }
+        return s
+    }
+    override func copy(_ sender: Any?) { if let t = selectedText { secureCopy?(t) } }
+    override func cut(_ sender: Any?) {
+        if let t = selectedText { secureCopy?(t); insertText("", replacementRange: selectedRange()) }
+    }
+    override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { [] }
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool { false }
+    // Services menu / "Share" / "Look Up" would hand the selection to other processes: disable.
+    override func validRequestor(forSendType sendType: NSPasteboard.PasteboardType?, returnType: NSPasteboard.PasteboardType?) -> Any? { nil }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let m = NSMenu()
+        m.addItem(withTitle: "Cut", action: #selector(cut(_:)), keyEquivalent: "x")
+        m.addItem(withTitle: "Copy (auto-clears)", action: #selector(copy(_:)), keyEquivalent: "c")
+        m.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "v")
+        m.addItem(withTitle: "Select All", action: #selector(selectAll(_:)), keyEquivalent: "a")
+        return m
+    }
+}
+
+/// Text entry for secrets: no autocorrect, no spell-check, no inline predictions, no Writing Tools, secure copy.
 struct PlainSecretTextEditor: NSViewRepresentable {
+    @Environment(AppModel.self) private var model
     @Binding var text: String
     var monospaced = true
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
-        let tv = scroll.documentView as! NSTextView
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        let tv = SecretTextView(frame: .zero)
+        tv.autoresizingMask = [.width]
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        scroll.documentView = tv
+        tv.secureCopy = { [model] value in model.copySecret(value, itemID: nil) }
         tv.delegate = context.coordinator
         tv.isAutomaticSpellingCorrectionEnabled = false
         tv.isAutomaticQuoteSubstitutionEnabled = false
@@ -20,16 +58,20 @@ struct PlainSecretTextEditor: NSViewRepresentable {
         tv.allowsUndo = false
         tv.usesFindPanel = false
         tv.isRichText = false
+        tv.importsGraphics = false
+        tv.isAutomaticLinkDetectionEnabled = false
+        tv.isAutomaticDataDetectionEnabled = false
         tv.font = monospaced ? .monospacedSystemFont(ofSize: 13, weight: .regular) : .systemFont(ofSize: 13)
         tv.textContainerInset = NSSize(width: 6, height: 8)
-        if #available(macOS 15.0, *) { tv.writingToolsBehavior = .none }
+        tv.inlinePredictionType = .no                       // macOS 14+: no predictive text / LM learning
+        if #available(macOS 15.0, *) { tv.writingToolsBehavior = .none; tv.mathExpressionCompletionType = .no }
         tv.setAccessibilityProtectedContent(true)
         scroll.borderType = .bezelBorder
         tv.string = text
         return scroll
     }
     func updateNSView(_ nsView: NSScrollView, context: Context) {
-        let tv = nsView.documentView as! NSTextView
+        guard let tv = nsView.documentView as? NSTextView else { return }
         if tv.string != text { tv.string = text }
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -39,6 +81,50 @@ struct PlainSecretTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
+        }
+    }
+}
+
+/// Single-line text field for Recovery-Kit style input: no autocorrect, no spell-check, no predictions, no Writing Tools.
+struct PlainSecretTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    var monospaced = false
+    func makeNSView(context: Context) -> NSTextField {
+        let f = NSTextField(string: text)
+        f.placeholderString = placeholder
+        f.delegate = context.coordinator
+        f.isBezeled = true; f.bezelStyle = .roundedBezel
+        f.font = monospaced ? .monospacedSystemFont(ofSize: 13, weight: .regular) : .systemFont(ofSize: 13)
+        f.allowsEditingTextAttributes = false
+        f.setAccessibilityProtectedContent(true)
+        return f
+    }
+    func updateNSView(_ f: NSTextField, context: Context) {
+        if f.stringValue != text { f.stringValue = text }
+        if let editor = f.currentEditor() as? NSTextView { Self.harden(editor) }
+    }
+    static func harden(_ tv: NSTextView) {
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        tv.isAutomaticTextCompletionEnabled = false
+        tv.isContinuousSpellCheckingEnabled = false
+        tv.isGrammarCheckingEnabled = false
+        tv.inlinePredictionType = .no
+        if #available(macOS 15.0, *) { tv.writingToolsBehavior = .none }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: PlainSecretTextField
+        init(_ p: PlainSecretTextField) { parent = p }
+        func controlTextDidChange(_ n: Notification) {
+            guard let f = n.object as? NSTextField else { return }
+            parent.text = f.stringValue
+        }
+        func controlTextDidBeginEditing(_ n: Notification) {
+            if let f = n.object as? NSTextField, let editor = f.currentEditor() as? NSTextView { PlainSecretTextField.harden(editor) }
         }
     }
 }
@@ -59,7 +145,7 @@ struct SecretRow: View {
                 Group {
                     if revealed {
                         Text(value).font(monospaced ? .system(.body, design: .monospaced) : .body)
-                            .textSelection(.enabled)
+                            .textSelection(.disabled)   // copying goes through SecureClipboard only (Copy button)
                             .accessibilityProtectedContent()
                     } else {
                         Text(value.isEmpty ? "—" : String(repeating: "•", count: min(max(value.count, 8), 24)))
@@ -171,7 +257,7 @@ struct RecoveryKitView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(kit)
                 .font(.system(.title3, design: .monospaced).weight(.medium))
-                .textSelection(.enabled)
+                .textSelection(.disabled)   // never on the clipboard: write it down or use "Save as text file…"
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))

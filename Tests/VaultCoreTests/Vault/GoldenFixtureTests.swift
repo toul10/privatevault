@@ -43,3 +43,30 @@ struct GoldenFixtureTests {
         #expect(SchemaMigrations.isComplete(from: 1, to: VaultStore.schemaVersion)) // shipping registry has no gaps
     }
 }
+
+@Suite("Schema/crypto version error paths", .serialized)
+struct VersionPathTests {
+    @Test func newer_schema_version_is_refused_and_corrupt_version_reported() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        _ = try await m.createVault(password: TestEnv.password)
+        await m.lock()
+        let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        try db.run("UPDATE meta SET value = ? WHERE key = 'schema_version'") { $0.bind(1, Data([9])) }; db.close()
+        await #expect(throws: VaultError.unsupportedFormat(9)) { _ = try await m.unlock(password: TestEnv.password) }
+        let db2 = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        try db2.run("UPDATE meta SET value = ? WHERE key = 'schema_version'") { $0.bind(1, Data([1, 2])) }; db2.close()
+        await #expect(throws: VaultError.corrupted("schema_version")) { _ = try await m.unlock(password: TestEnv.password) }
+        let db3 = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        try db3.exec("DELETE FROM meta"); db3.close()
+        await #expect(throws: VaultError.corrupted("schema_version")) { _ = try await m.unlock(password: TestEnv.password) }
+    }
+    @Test func unknown_record_crypto_version_aborts_unlock() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        let s = try await m.createVault(password: TestEnv.password).session
+        try await s.save(TestEnv.sampleItems()[0])
+        await m.lock()
+        let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        try db.exec("UPDATE records SET crypto_version = 2"); db.close()
+        await #expect(throws: VaultError.unsupportedFormat(2)) { _ = try await m.unlock(password: TestEnv.password) }
+    }
+}
