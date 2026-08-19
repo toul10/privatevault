@@ -1,0 +1,31 @@
+# Build products
+.build/
+dist/
+*.dSYM
+*.o
+*.xcuserstate
+xcuserdata/
+DerivedData/
+.swiftpm/xcode/
+Package.resolved.bak
+
+# NEVER commit vault data, backups, recovery material or signing secrets
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.privatevault
+*.p12
+*.pem
+*.key
+*.mobileprovision
+*recovery-kit*
+*RecoveryKit*
+Packaging/*.cer
+
+# macOS / editor noise
+.DS_Store
+*.swp
+.vscode/
+.idea/
