@@ -98,9 +98,10 @@ Secret Key through HKDF (not XOR) so no linear relation between the two inputs e
 ### 2.3 Argon2id parameters
 
 - Version 0x13, `m` (KiB), `t` (passes), `p` (lanes), 16-byte CSPRNG salt, 32-byte output.
-- **Production defaults** are chosen by `Scripts/benchmark-kdf.sh` on the user's Mac (target 0.5–1.0 s in a
-  release build) and written into `KDFParameters.current`. Floor for vaults created by this app: **m ≥ 64 MiB,
-  t ≥ 3**. A test asserts `KDFParameters.current ≥ floor`.
+- **Production defaults** were chosen with `Scripts/benchmark-kdf.sh` on the owner's MacBook Air M1 (8 GB), release
+  build, 2026-08-19: `m = 256 MiB, t = 6, p = 4` ≈ 0.65 s per unlock (256 MiB/t=3 measured 0.33 s; 512 MiB/t=3
+  0.73 s but was rejected because this Mac has 8 GB RAM and heavy swap use). They live in `KDFParameters.current`.
+  Floor for vaults created by this app: **m ≥ 64 MiB, t ≥ 3**. A test asserts `KDFParameters.current ≥ floor`.
 - Parameters are **untrusted input** when read from a header or backup: the app validates
   `m ∈ [8 MiB, 1 GiB]`, `t ∈ [1, 16]`, `p ∈ [1, 4]`, `salt = 16 B` **before** allocating memory or deriving.
   Out-of-range ⇒ "vault header is invalid"; never repaired with defaults.

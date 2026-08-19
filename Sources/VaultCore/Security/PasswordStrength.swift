@@ -24,7 +24,17 @@ public struct PasswordStrength: Sendable, Equatable {
         var bits = Double(chars.count) * log2(Double(max(pool, 2)))
         var warnings: [String] = []
         let lower = password.lowercased()
+        let perChar = log2(Double(max(pool, 2)))
         if commonPasswords.contains(lower) { bits = min(bits, 8); warnings.append("This is one of the most common passwords") }
+        else if let common = commonPasswords.first(where: { $0.count >= 6 && lower.contains($0) }) {
+            bits -= Double(common.count) * perChar - 10; warnings.append("Contains a very common password")
+        }
+        // pure repetition of a short pattern ("abcabcabc") is worth little more than the pattern
+        if let unit = repeatedUnit(chars), unit.count < chars.count {
+            let reps = chars.count / unit.count
+            bits = min(bits, Double(unit.count) * perChar + log2(Double(reps)) + 2)
+            warnings.append("Repeated pattern")
+        }
         // repeated characters / sequences reduce effective entropy
         let unique = Set(chars).count
         if unique <= max(2, chars.count / 4) { bits *= 0.5; warnings.append("Too many repeated characters") }
@@ -39,6 +49,14 @@ public struct PasswordStrength: Sendable, Equatable {
         default: rating = .veryStrong
         }
         return PasswordStrength(entropyBits: bits, rating: rating, warnings: warnings)
+    }
+    private static func repeatedUnit(_ chars: [Character]) -> [Character]? {
+        guard chars.count >= 4 else { return nil }
+        for len in 1...(chars.count / 2) where chars.count % len == 0 {
+            let unit = Array(chars[0..<len])
+            if stride(from: 0, to: chars.count, by: len).allSatisfy({ Array(chars[$0..<$0+len]) == unit }) { return unit }
+        }
+        return nil
     }
     private static func isSequential(_ chars: [Character]) -> Bool {
         guard chars.count >= 4 else { return false }

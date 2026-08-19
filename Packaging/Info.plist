@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleDisplayName</key><string>PrivateVault</string>
+	<key>CFBundleExecutable</key><string>PrivateVault</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundleIdentifier</key><string>com.kostastoulis.privatevault</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>PrivateVault</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>1.0.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key><string>14.0</string>
+	<key>LSMultipleInstancesProhibited</key><true/>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSHumanReadableCopyright</key><string>Private use.</string>
+	<key>NSPrincipalClass</key><string>NSApplication</string>
+	<key>NSSupportsAutomaticTermination</key><false/>
+	<key>NSSupportsSuddenTermination</key><false/>
+	<key>NSFaceIDUsageDescription</key><string>PrivateVault uses Touch ID to unlock your vault and to reveal wallet secrets.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key><string>com.kostastoulis.privatevault.backup</string>
+			<key>UTTypeDescription</key><string>PrivateVault Encrypted Backup</string>
+			<key>UTTypeConformsTo</key><array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict><key>public.filename-extension</key><array><string>privatevault</string></array></dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key><string>PrivateVault Encrypted Backup</string>
+			<key>CFBundleTypeRole</key><string>None</string>
+			<key>LSItemContentTypes</key><array><string>com.kostastoulis.privatevault.backup</string></array>
+		</dict>
+	</array>
+</dict>
+</plist>

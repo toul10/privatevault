@@ -22,7 +22,7 @@ public struct KDFParameters: Equatable, Sendable, Codable {
     public static let floor = KDFParameters(memoryKiB: 64 * 1024, passes: 3, lanes: 1)
     /// Production defaults for new vaults. Chosen by Scripts/benchmark-kdf.sh on the owner's Mac
     /// (target 0.5–1.0 s in a release build). See SECURITY_ARCHITECTURE.md §2.3.
-    public static let current = KDFParameters(memoryKiB: 256 * 1024, passes: 3, lanes: 4)
+    public static let current = KDFParameters(memoryKiB: 256 * 1024, passes: 6, lanes: 4)
     /// Small parameters for unit tests only (never used for real vaults; tests assert that).
     public static let testing = KDFParameters(memoryKiB: 8 * 1024, passes: 1, lanes: 1)
 
