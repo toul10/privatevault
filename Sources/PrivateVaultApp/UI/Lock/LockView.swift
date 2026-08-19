@@ -36,7 +36,7 @@ struct LockView: View {
             }
             ErrorBanner(message: error).frame(width: 320)
             Spacer()
-            Text("Offline · encrypted on this Mac · no accounts").font(.caption).foregroundStyle(.tertiary).padding(.bottom, 12)
+            Text("Offline · encrypted on this Mac · no accounts · Settings: ⌘,").font(.caption).foregroundStyle(.tertiary).padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { focused = true; Task { await model.refreshPhase() } }

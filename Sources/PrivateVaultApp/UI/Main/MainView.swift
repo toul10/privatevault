@@ -56,6 +56,9 @@ struct MainView: View {
                 Button { showGenerator = true } label: { Label("Password Generator", systemImage: "dice") }.help("Generate a password")
             }
             ToolbarItem {
+                SettingsLink { Label("Settings", systemImage: "gear") }.help("Settings (⌘,)")
+            }
+            ToolbarItem {
                 Button { Task { await model.lock() } } label: { Label("Lock", systemImage: "lock") }.help("Lock the vault (⌘L)")
             }
         }
