@@ -87,7 +87,13 @@ public actor VaultManager {
         let vmk = try KeyHierarchy.unwrapVMK(stored.wrappedVMK, kek: kek, header: header)
         let keys = try VaultKeys(vaultID: header.vaultID, vmk: vmk)
         var current = stored
+        var stateTampered = false
         if !header.kdf.isAtLeast(kdfPolicy) {
+            // Verify the stored state MAC BEFORE rewriting the header (the rewrite recomputes it for the new
+            // generation); a mismatch must still surface as a warning after the upgrade.
+            let recs = try await store.allRecords()
+            stateTampered = !VaultState.verify(stored.stateMAC, key: keys.vaultStateKey, vaultID: header.vaultID, generation: header.generation,
+                                               entries: recs.map { (id: $0.id, revision: $0.revision) })
             (header, current) = try await rewrapHeader(store: store, password: pw, secretKey: sk, keys: keys, header: header,
                                                          stateEntries: nil, stateMAC: stored.stateMAC)
             SecureLog.notice(.crypto, "KDF parameters upgraded")
@@ -97,6 +103,7 @@ public actor VaultManager {
             catch { SecureLog.error(.keychain, "secret key could not be stored on device", error: error) }
         }
         let s = try await VaultSession(store: store, keys: keys, header: header, stored: current, pinnedGeneration: pinned)
+        if stateTampered { await s.addIntegrityWarning(.recordStateMismatch) }
         try? deviceKeys.updatePinnedState(vaultID: header.vaultID, generation: header.generation, headerSHA256: current.headerSHA256)
         session = s
         return s
@@ -164,9 +171,6 @@ public actor VaultManager {
             // entries unknown yet (unlock path): recompute from the store
             let recs = try await store.allRecords()
             mac = VaultState.mac(key: keys.vaultStateKey, vaultID: header.vaultID, generation: newHeader.generation, entries: recs.map { (id: $0.id, revision: $0.revision) })
-            // if the old MAC did not verify, the session will still warn (we verify old state before rewriting)
-            let oldOK = VaultState.verify(stateMAC, key: keys.vaultStateKey, vaultID: header.vaultID, generation: header.generation, entries: recs.map { (id: $0.id, revision: $0.revision) })
-            if !oldOK { SecureLog.notice(.vault, "state MAC mismatch before header rewrite") }
         }
         let stored = StoredHeader(canonical: newHeader.canonicalBytes, wrappedVMK: wrapped,
                                   headerSHA256: VaultHeader.sha256(canonical: newHeader.canonicalBytes, wrappedVMK: wrapped),

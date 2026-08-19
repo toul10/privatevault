@@ -83,6 +83,26 @@ struct SecurityFlowsTests {
         await #expect(throws: VaultError.authenticationFailed) { _ = try await m.unlock(password: TestEnv.password) }
     }
 
+    @Test func kdf_upgrade_does_not_hide_tampering() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        let s = try await m.createVault(password: TestEnv.password).session
+        for item in TestEnv.sampleItems() { try await s.save(item) }
+        await m.lock()
+        // attacker deletes a record row
+        let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        let id = try db.query("SELECT id FROM records LIMIT 1", bind: { _ in }) { $0.blob(0) }[0]
+        try db.run("DELETE FROM records WHERE id = ?") { $0.bind(1, id) }; db.close()
+        // the next unlock also performs a KDF upgrade (header rewrite) — the warning must survive it
+        await m.setKDFPolicy(KDFParameters(memoryKiB: 16 * 1024, passes: 1, lanes: 1))
+        let s2 = try await m.unlock(password: TestEnv.password)
+        #expect(await s2.integrityWarnings.contains(.recordStateMismatch))
+        #expect(try readHeader(m.vaultURL).header().generation == 2)
+        await m.lock()
+        // after the user acknowledged (unlock + normal use), a clean unlock has no warning
+        let s3 = try await m.unlock(password: TestEnv.password)
+        #expect(await s3.integrityWarnings.isEmpty)
+    }
+
     @Test func kdf_upgrade_on_unlock() async throws {
         let (m, _, _, _) = TestEnv.makeManager()
         let s = try await m.createVault(password: TestEnv.password).session

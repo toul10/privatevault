@@ -41,6 +41,7 @@ public actor VaultSession {
         SecureLog.log(.vault, "vault unlocked", .count(items.count))
     }
 
+    func addIntegrityWarning(_ w: IntegrityWarning) { if !integrityWarnings.contains(w) { integrityWarnings.append(w) } }
     private func entries() -> [(id: UUID, revision: UInt64)] { revisions.map { (id: $0.key, revision: $0.value) } }
     private func requireKeys() throws -> (VaultKeys, RecordCodec) {
         guard let keys, let codec else { throw VaultError.vaultLocked }
