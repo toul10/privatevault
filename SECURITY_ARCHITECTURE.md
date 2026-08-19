@@ -330,9 +330,10 @@ item cache and tier-2 plaintext, clear the clipboard if it still holds our last 
 3. Keychain usage: generic-password items, service `com.kostastoulis.privatevault`, account = vaultID,
    `kSecAttrSynchronizable = false`. The app first tries the Data-Protection keychain
    (`kSecUseDataProtectionKeychain = true`); with an ad-hoc signed build macOS returns `errSecMissingEntitlement`
-   and the app falls back to the classic login keychain. Reads never show a modal prompt on the unlock path: if
-   the item cannot be read silently (different build of the app, user denied), the app asks for the Recovery Kit
-   and re-stores the key.
+   and the app falls back to the classic login keychain. After the app binary changes (a rebuild), macOS shows
+   its standard Keychain dialog once ("PrivateVault wants to use your confidential information…"); choosing
+   "Always Allow" records the new build in the item's ACL. If the item cannot be read at all (user denied, item
+   deleted, different Mac), the app asks for the Recovery Kit and re-stores the key.
 4. If the Keychain is unavailable entirely, the Secret Key is **not** written anywhere else; the user types the
    Recovery Kit at each unlock. (No "helpful" plaintext fallback files.)
 5. On a new Mac, after Migration Assistant, after "Erase All Content and Settings" or a SEP reset the SE-wrapped

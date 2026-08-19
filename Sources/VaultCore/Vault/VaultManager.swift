@@ -303,6 +303,11 @@ public actor VaultManager {
         let keys = try VaultKeys(vaultID: parsed.header.vaultID, vmk: vmk)
         let mac = try BackupCodec.verify(parsed, keys: keys)
         var stored = parsed.stored; stored.stateMAC = mac
+        // device records of a DIFFERENT existing vault become orphans: remove them
+        if let existing = await currentVaultID(), existing != parsed.header.vaultID {
+            try? deviceKeys.disableBiometric(vaultID: existing)
+            try? deviceKeys.deleteSecretKey(vaultID: existing)
+        }
         // write to a temporary file next to the vault, then swap atomically
         await lock()
         let tmpURL = vaultURL.deletingLastPathComponent().appendingPathComponent("vault.restore.tmp")

@@ -17,7 +17,8 @@ convenience that lets *this Mac's* Secure Enclave hand back the VMK after a fing
 password and works on no other machine; see Scenario C for what it can and cannot do.)
 
 About the kit: shown once at creation (you must re-type one group); shown again later only after re-entering
-the Master Password. It carries a 4-byte `sk_id` so you can match kit and vault. Typing is forgiving (lower
+the Master Password. The vault stores a 4-byte identifier of the key, so a kit that belongs to a *different*
+vault is reported as such instead of "wrong password". Typing is forgiving (lower
 case, `I`/`L` for `1`, `O` for `0`, missing hyphens) and three check characters catch typos before any unlock
 attempt. The kit is as sensitive as the vault: alone it opens nothing, but whoever holds it can try passwords
 offline — that is why the password must be strong (§2.2).
@@ -25,8 +26,9 @@ offline — that is why the password must be strong (§2.2).
 ## 2. Scenarios
 
 ### A — you remember the Master Password and still have this Mac
-Nothing to recover. Unlock with the password (or Touch ID). If the app ever cannot read the Secret Key from
-the Keychain silently, it asks for the Recovery Kit once and stores it again (§8.1.3). Keep backing up.
+Nothing to recover. Unlock with the password (or Touch ID). After the app is rebuilt/updated, macOS may show its
+standard Keychain dialog once — click *Always Allow*. If the app ever cannot read the Secret Key from the
+Keychain at all, it asks for the Recovery Kit once and stores it again (§8.1.3). Keep backing up.
 
 ### B — you remember the Master Password, the Mac is lost, you have the Recovery Kit and a backup
 **Fully recoverable.** On a new Mac: install PrivateVault → *Restore from backup* → pick the file → enter the
@@ -83,9 +85,8 @@ read the data: reveal and copy your items out before the vault locks (auto-lock 
 
 ## 6. Keychain item deleted or unreadable
 
-If the Secret-Key item is gone or unreadable (deleted in Keychain Access, a different build of the app, access
-denied) the app asks for the Recovery Kit and stores it again — nothing is lost; no Keychain password prompt is
-shown on the unlock path (§8.1.3). If the Touch ID item is gone, re-enable Touch ID. If the Keychain is
+If the Secret-Key item is gone or unreadable (deleted in Keychain Access, access denied in the Keychain dialog)
+the app asks for the Recovery Kit and stores it again — nothing is lost (§8.1.3). If the Touch ID item is gone, re-enable Touch ID. If the Keychain is
 unavailable entirely, the app never writes the key anywhere else: you type the Recovery Kit at each unlock
 (§8.1.4). No kit **and** no Keychain item = Secret Key gone on every copy: not recoverable (section 9).
 

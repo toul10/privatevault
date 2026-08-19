@@ -54,6 +54,10 @@ final class AppModel {
         windowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.applyWindowSharing() }
         }
+        AppDelegate.terminateHandler = { [weak self] in
+            self?.clipboard.clearIfStillOurs()
+            self?.items = []
+        }
         Task { await refreshPhase() }
     }
     private var windowObserver: Any?

@@ -31,6 +31,12 @@ struct PrivateVaultApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Set by AppModel: synchronous cleanup (clipboard) that must happen before the process exits.
+    nonisolated(unsafe) static var terminateHandler: (@MainActor () -> Void)?
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { AppDelegate.terminateHandler?() }
+    }
     func applicationWillFinishLaunching(_ notification: Notification) {
         // No core dumps (process memory holds secrets while unlocked).
         var lim = rlimit(rlim_cur: 0, rlim_max: 0)

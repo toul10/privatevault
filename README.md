@@ -52,9 +52,10 @@ open dist/PrivateVault.app
 First-launch notes:
 - The app is **ad-hoc signed** (no certificate), sandboxed, with the hardened runtime. A locally built app carries no
   quarantine attribute, so Gatekeeper does not block it. Only run builds you made yourself.
-- After a rebuild macOS sees a "new" app, so the Keychain item holding your Secret Key can no longer be read silently.
-  PrivateVault never shows a Keychain password prompt on the unlock path: it asks for your **Recovery Kit** once and
-  stores the Secret Key again for the new build (`SECURITY_ARCHITECTURE.md` §8.1). Keep the kit at hand when you rebuild.
+- After a rebuild macOS sees a "new" app, so the first unlock shows the standard macOS Keychain dialog
+  ("PrivateVault wants to use your confidential information…"): click **Always Allow** (your login password may be
+  asked). If you deny it or the item is gone, PrivateVault asks for your **Recovery Kit** once and stores the Secret
+  Key again (`SECURITY_ARCHITECTURE.md` §8.1). Keep the kit at hand when you rebuild.
 - Nothing is installed system-wide; the vault is
   `~/Library/Containers/com.kostastoulis.privatevault/…/Vault.noindex/vault.sqlite`.
 
