@@ -20,8 +20,9 @@ Package.resolved.bak
 *.pem
 *.key
 *.mobileprovision
-*recovery-kit*
-*RecoveryKit*
+# exported Recovery Kit text files (never source files)
+*Recovery Kit*.txt
+*recovery-kit*.txt
 Packaging/*.cer
 
 # macOS / editor noise
