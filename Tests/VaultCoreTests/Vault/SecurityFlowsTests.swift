@@ -78,9 +78,10 @@ struct SecurityFlowsTests {
         // and the old header transplanted back does not unlock the rotated records
         await m.lock()
         let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
-        try db.run("UPDATE vault_header SET canonical = ?, wrapped_vmk = ?") { $0.bind(1, oldHeader.canonical); $0.bind(2, oldHeader.wrappedVMK) }
+        try db.run("UPDATE vault_header SET canonical = ?, wrapped_vmk = ?, header_sha256 = ?") { $0.bind(1, oldHeader.canonical); $0.bind(2, oldHeader.wrappedVMK); $0.bind(3, oldHeader.headerSHA256) }
         db.close()
-        await #expect(throws: VaultError.authenticationFailed) { _ = try await m.unlock(password: TestEnv.password) }
+        // the old header unwraps the old VMK, but every rotated record fails ⇒ refused
+        await #expect(throws: VaultError.corrupted("all records unreadable")) { _ = try await m.unlock(password: TestEnv.password) }
     }
 
     @Test func kdf_upgrade_does_not_hide_tampering() async throws {
@@ -180,8 +181,9 @@ struct SecurityFlowsTests {
         for item in TestEnv.sampleItems() { try await created.session.save(item) }
         let before = try readRecordBlobs(m.vaultURL)
         await #expect(throws: VaultError.authenticationFailed) { _ = try await m.regenerateSecretKey(password: TestEnv.otherPassword) }
-        let newSK = try await m.regenerateSecretKey(password: TestEnv.password)
-        let newKit = RecoveryKit.encode(newSK)
+        let regen = try await m.regenerateSecretKey(password: TestEnv.password)
+        #expect(regen.secretKeyStoredOnDevice)
+        let newKit = RecoveryKit.encode(regen.secretKey)
         #expect(newKit != oldKit)
         let after = try readRecordBlobs(m.vaultURL)
         for (id, blob) in before { #expect(after[id] != blob) }
@@ -295,5 +297,99 @@ struct SecurityFlowsTests {
         #expect(!m.vaultExists)
         #expect(store.allAccounts.isEmpty)
         await #expect(throws: VaultError.vaultNotFound) { _ = try await m.unlock(password: TestEnv.password) }
+    }
+}
+
+@Suite("Audit regression tests (batch 2)", .serialized)
+struct AuditRegressionTests {
+    @Test func secret_key_regeneration_is_crash_safe_and_survives_keychain_failure() async throws {
+        // (a) Keychain refuses writes during regeneration: the kit is still returned and marked as the only copy
+        let store = InMemorySecretStore()
+        let (m, _, _, _) = TestEnv.makeManager(store: store)
+        let created = try await m.createVault(password: TestEnv.password)
+        try await created.session.save(TestEnv.sampleItems()[0])
+        store.writesFail = true
+        let r = try await m.regenerateSecretKey(password: TestEnv.password)
+        #expect(!r.secretKeyStoredOnDevice)
+        store.writesFail = false
+        await m.lock()
+        await #expect(throws: VaultError.secretKeyRequired) { _ = try await m.unlock(password: TestEnv.password) }   // old device key no longer matches
+        let s = try await m.unlock(password: TestEnv.password, recoveryKit: RecoveryKit.encode(r.secretKey))
+        #expect(try await s.count() == 1)
+        await m.lock()
+        // (b) interrupted regeneration: the new key sits in the pending slot while the vault is already rotated
+        let store2 = InMemorySecretStore()
+        let (m2, _, _, _) = TestEnv.makeManager(store: store2)
+        let c2 = try await m2.createVault(password: TestEnv.password)
+        let vaultID = await c2.session.currentHeader.vaultID
+        try await c2.session.save(TestEnv.sampleItems()[0])
+        let r2 = try await m2.regenerateSecretKey(password: TestEnv.password)
+        // simulate the crash between rotate and promote: put the new key back into "pending" and restore the OLD main record
+        let newRecord = store2.rawValue("sk:\(vaultID.uuidString)")!
+        try store2.write("sk-pending:\(vaultID.uuidString)", data: newRecord)
+        try m2.deviceKeys.storeSecretKey(c2.secretKey, vaultID: vaultID, generation: 1, headerSHA256: Data(count: 32), stateMAC: nil)
+        await m2.lock()
+        let s2 = try await m2.unlock(password: TestEnv.password)   // finds the pending key and promotes it
+        #expect(try await s2.count() == 1)
+        #expect(store2.rawValue("sk-pending:\(vaultID.uuidString)") == nil)
+        await m2.lock()
+        _ = try await m2.unlock(password: TestEnv.password)
+        _ = r2
+    }
+
+    @Test func failed_restore_keeps_existing_vault_and_its_secret_key() async throws {
+        let (m, store, _, _) = TestEnv.makeManager()
+        let created = try await m.createVault(password: TestEnv.password)
+        try await created.session.save(TestEnv.sampleItems()[0])
+        let vaultID = await created.session.currentHeader.vaultID
+        // a backup of a DIFFERENT vault
+        let (other, _, _, _) = TestEnv.makeManager()
+        let oc = try await other.createVault(password: TestEnv.otherPassword)
+        let backup = try await other.exportBackup(password: TestEnv.otherPassword)
+        // make the vault directory read-only so the temp database cannot be written
+        let dir = m.vaultURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+        await #expect(throws: VaultError.self) { _ = try await m.restoreBackup(backup, password: TestEnv.otherPassword, recoveryKit: RecoveryKit.encode(oc.secretKey)) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        #expect(m.vaultExists)
+        #expect(store.rawValue("sk:\(vaultID.uuidString)") != nil)          // old SK untouched
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("vault.restore.tmp").path))
+        let s = try await m.unlock(password: TestEnv.password)
+        #expect(try await s.count() == 1)
+    }
+
+    @Test func hostile_backup_timestamp_is_rejected_without_crashing() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        let created = try await m.createVault(password: TestEnv.password)
+        let backup = try await m.exportBackup(password: TestEnv.password)
+        var doc = try JSONDecoder().decode(BackupCodec.Document.self, from: backup)
+        doc.createdAt = Int64.max
+        let e = JSONEncoder(); e.outputFormatting = [.sortedKeys]
+        await #expect(throws: VaultError.backupInvalid("creation time")) { _ = try await m.restoreBackup(try e.encode(doc), password: TestEnv.password, recoveryKit: RecoveryKit.encode(created.secretKey)) }
+        doc.createdAt = -5
+        await #expect(throws: VaultError.backupInvalid("creation time")) { _ = try await m.restoreBackup(try e.encode(doc), password: TestEnv.password) }
+    }
+
+    @Test func kdf_upgrade_never_lowers_a_dimension() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        await m.setKDFPolicy(KDFParameters(memoryKiB: 16 * 1024, passes: 1, lanes: 1))
+        _ = try await m.createVault(password: TestEnv.password)
+        await m.lock()
+        await m.setKDFPolicy(KDFParameters(memoryKiB: 8 * 1024, passes: 2, lanes: 2))   // more passes, less memory
+        _ = try await m.unlock(password: TestEnv.password)
+        let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        let canonical = try db.query("SELECT canonical FROM vault_header", bind: { _ in }) { $0.blob(0) }[0]; db.close()
+        #expect(try VaultHeader.parse(canonical: canonical).kdf == KDFParameters(memoryKiB: 16 * 1024, passes: 2, lanes: 2))
+    }
+
+    @Test func touch_id_cancel_is_reported_as_cancel_not_as_invalidation() async throws {
+        let (m, _, enclave, _) = TestEnv.makeManager()
+        _ = try await m.createVault(password: TestEnv.password)
+        try await m.enableBiometricUnlock()
+        await m.lock()
+        enclave.cancelNext = true
+        await #expect(throws: VaultError.userCancelled) { _ = try await m.unlockWithBiometrics() }
+        _ = try await m.unlockWithBiometrics()
     }
 }

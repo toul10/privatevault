@@ -11,8 +11,8 @@ public enum RecoveryKit {
     static let checkDomain = Data("privatevault-sk-v1".utf8)
 
     public static func encode(_ sk: SecretKey) -> String {
-        let bytes = sk.bytes.copyData()
-        defer { /* bytes is a Data copy; cannot wipe reliably */ }
+        var bytes = sk.bytes.copyData()
+        defer { bytes.wipe() }
         // 256 bits → 52 symbols of 5 bits (260 bits): left-pad with 4 zero bits.
         var bits: [UInt8] = [0, 0, 0, 0]
         for b in bytes { for i in (0..<8).reversed() { bits.append((b >> UInt8(i)) & 1) } }
@@ -53,6 +53,7 @@ public enum RecoveryKit {
             for j in 0..<8 { b = b << 1 | bits[i + j] }
             bytes.append(b)
         }
+        defer { bytes.wipe() }
         let expected = checksum(bytes)
         let given = Array(s.suffix(checkChars))
         guard expected == given else { throw VaultError.recoveryKitInvalid("checksum mismatch") }

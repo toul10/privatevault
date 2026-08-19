@@ -88,10 +88,14 @@ public actor VaultStore {
             $0.bind(1, h.canonical); $0.bind(2, h.wrappedVMK); $0.bind(3, h.headerSHA256); $0.bind(4, h.skID); $0.bind(5, h.stateMAC)
         }
     }
-    /// Header rewrite (password change / KDF upgrade): single transaction, then VACUUM so the old row is gone.
+    /// Header rewrite (password change / KDF upgrade): single transaction, then best-effort VACUUM so the old row is
+    /// physically gone. A VACUUM failure (disk full) must not be reported as a failed write: the COMMIT already happened.
     public func writeHeader(_ h: StoredHeader) throws {
         try db.transaction { try updateHeader(h) }
-        try vacuum()
+        vacuumBestEffort()
+    }
+    private func vacuumBestEffort() {
+        do { try vacuum() } catch { SecureLog.error(.storage, "vacuum failed (non-fatal)", error: error) }
     }
 
     // MARK: records
@@ -132,10 +136,16 @@ public actor VaultStore {
             }
             try updateHeader(header)
         }
-        try vacuum()
+        vacuumBestEffort()
     }
 
     public func vacuum() throws { try db.exec("VACUUM") }
+    /// Removes leftover SQLite side files (journal) for a vault path that is about to be replaced.
+    public static func removeSideFiles(for url: URL) {
+        for suffix in ["-journal", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: url.path + suffix))
+        }
+    }
     public func integrityCheck() throws { try db.integrityCheck() }
     public func close() { db.close() }
 }

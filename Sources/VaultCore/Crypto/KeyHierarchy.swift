@@ -85,12 +85,12 @@ public enum KeyHierarchy {
         guard wrapped.count == wrappedVMKLength else { throw VaultError.authenticationFailed }
         let box: AES.GCM.SealedBox
         do { box = try AES.GCM.SealedBox(combined: wrapped) } catch { throw VaultError.authenticationFailed }
-        let opened: Data
+        var opened: Data
         do { opened = try AES.GCM.open(box, using: kek, authenticating: header.canonicalBytes) }
         catch { throw VaultError.authenticationFailed }
+        defer { opened.wipe() }
         guard opened.count == 64, opened.prefix(32).allSatisfy({ $0 == 0 }) else { throw VaultError.authenticationFailed }
-        let vmk = SecureBytes(copying: opened.suffix(32))
-        return vmk
+        return SecureBytes(copying: opened.suffix(32))
     }
 
     public static func generateVMK() -> SecureBytes { SecureRandom.secureBytes(32) }

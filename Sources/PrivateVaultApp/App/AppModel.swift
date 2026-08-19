@@ -181,11 +181,24 @@ final class AppModel {
         try await manager.changePassword(current: current, new: new, rotateKeys: rotateKeys)
         await reloadItems()
     }
-    func regenerateSecretKey(password: String) async throws -> String {
-        let sk = try await manager.regenerateSecretKey(password: password)
+    func regenerateSecretKey(password: String) async throws -> CreatedVault {
+        let r = try await manager.regenerateSecretKey(password: password)
         secretKeyOnDevice = await manager.secretKeyAvailableOnDevice()
         await reloadItems()
-        return RecoveryKit.encode(sk)
+        return CreatedVault(recoveryKit: RecoveryKit.encode(r.secretKey), secretKeyStoredOnDevice: r.secretKeyStoredOnDevice)
+    }
+    /// True when the Secret Key at rest is Secure-Enclave-wrapped; false on Macs without a Secure Enclave (raw in Keychain).
+    var secretKeyHardwareBound: Bool { manager.deviceKeys.secretKeyIsHardwareBound }
+    /// Ids of records that could not be decrypted at unlock (tampered/corrupted).
+    var unreadableRecordCount: Int { get async { await session?.unreadableRecordIDs.count ?? 0 } }
+    func purgeUnreadableRecords() async throws {
+        guard let session else { throw VaultError.vaultLocked }
+        try await session.purgeUnreadableRecords()
+        integrityWarnings = await session.integrityWarnings
+    }
+    func inspectBackup(_ data: Data) throws -> (createdAt: Date, recordCount: Int) {
+        let r = try manager.inspectBackup(data)
+        return (r.createdAt, r.recordCount)
     }
     func recoveryKit(password: String) async throws -> String { try await manager.recoveryKit(password: password) }
     func exportBackup(password: String) async throws -> Data { try await manager.exportBackup(password: password) }

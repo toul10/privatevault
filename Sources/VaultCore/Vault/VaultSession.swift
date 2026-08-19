@@ -12,36 +12,44 @@ public actor VaultSession {
     private(set) var stored: StoredHeader
     private var items: [UUID: VaultItem] = [:]
     private var revisions: [UUID: UInt64] = [:]
+    /// Records whose ciphertext did not authenticate at unlock (tampered/corrupted). Kept in the store, hidden from the UI.
+    public private(set) var unreadableRecordIDs: [UUID] = []
     public private(set) var integrityWarnings: [IntegrityWarning] = []
     public let unlockedAt: Date
+    /// Called after every committed change with the new state MAC (the manager mirrors it to the device store).
+    var onStateChanged: (@Sendable (Data) -> Void)?
 
-    init(store: VaultStore, keys: VaultKeys, header: VaultHeader, stored: StoredHeader, pinnedGeneration: UInt32?) async throws {
+    init(store: VaultStore, keys: VaultKeys, header: VaultHeader, stored: StoredHeader, warnings: [IntegrityWarning]) async throws {
         self.store = store; self.keys = keys; self.codec = RecordCodec(keys: keys)
         self.header = header; self.stored = stored; self.vaultID = header.vaultID
         self.unlockedAt = Date()
-        try await loadAndVerify(pinnedGeneration: pinnedGeneration)
+        self.integrityWarnings = warnings
+        try await loadAndVerify()
     }
 
-    private func loadAndVerify(pinnedGeneration: UInt32?) async throws {
+    private func loadAndVerify() async throws {
         guard let keys, let codec else { throw VaultError.vaultLocked }
         let records = try await store.allRecords()
-        var loaded: [UUID: VaultItem] = [:], revs: [UUID: UInt64] = [:]
+        var loaded: [UUID: VaultItem] = [:], revs: [UUID: UInt64] = [:], bad: [UUID] = []
         for r in records {
-            let item = try codec.open(r)   // any tampering ⇒ authenticationFailed (unlock fails)
-            loaded[item.id] = item; revs[r.id] = r.revision
+            revs[r.id] = r.revision
+            do { let item = try codec.open(r); loaded[item.id] = item }
+            catch { bad.append(r.id) }   // tampered / corrupted / unknown version: quarantine, do not brick the vault
         }
-        items = loaded; revisions = revs
-        var warnings: [IntegrityWarning] = []
+        // Every record failing means the VMK is wrong for this data (stale blob) or the whole file was tampered —
+        // not a partial-recovery situation.
+        if !records.isEmpty && bad.count == records.count { throw VaultError.corrupted("all records unreadable") }
+        items = loaded; revisions = revs; unreadableRecordIDs = bad
+        if !bad.isEmpty { addIntegrityWarning(.unreadableRecords); SecureLog.error(.vault, "unreadable records at unlock", .count(bad.count)) }
         if !VaultState.verify(stored.stateMAC, key: keys.vaultStateKey, vaultID: vaultID, generation: header.generation, entries: entries()) {
-            warnings.append(.recordStateMismatch)
+            addIntegrityWarning(.recordStateMismatch)
         }
-        if let pinned = pinnedGeneration, header.generation < pinned { warnings.append(.generationRollback) }
-        integrityWarnings = warnings
-        if !warnings.isEmpty { SecureLog.notice(.vault, "integrity warning on unlock", .count(warnings.count)) }
+        if !integrityWarnings.isEmpty { SecureLog.notice(.vault, "integrity warning on unlock", .count(integrityWarnings.count)) }
         SecureLog.log(.vault, "vault unlocked", .count(items.count))
     }
 
     func addIntegrityWarning(_ w: IntegrityWarning) { if !integrityWarnings.contains(w) { integrityWarnings.append(w) } }
+    func setStateChangedHandler(_ h: @escaping @Sendable (Data) -> Void) { onStateChanged = h }
     private func entries() -> [(id: UUID, revision: UInt64)] { revisions.map { (id: $0.key, revision: $0.value) } }
     private func requireKeys() throws -> (VaultKeys, RecordCodec) {
         guard let keys, let codec else { throw VaultError.vaultLocked }
@@ -97,6 +105,7 @@ public actor VaultSession {
         let mac = VaultState.mac(key: keys.vaultStateKey, vaultID: vaultID, generation: header.generation, entries: newRevs.map { (id: $0.key, revision: $0.value) })
         try await store.commit(upserts: [record], deletes: [], stateMAC: mac)
         items[item.id] = stored; revisions = newRevs; self.stored.stateMAC = mac
+        onStateChanged?(mac)
         SecureLog.log(.vault, "item saved")
         return stored
     }
@@ -107,7 +116,21 @@ public actor VaultSession {
         let mac = VaultState.mac(key: keys.vaultStateKey, vaultID: vaultID, generation: header.generation, entries: newRevs.map { (id: $0.key, revision: $0.value) })
         try await store.commit(upserts: [], deletes: [id], stateMAC: mac)
         items[id] = nil; revisions = newRevs; self.stored.stateMAC = mac
+        onStateChanged?(mac)
         SecureLog.log(.vault, "item deleted")
+    }
+    /// Permanently removes the records that could not be decrypted at unlock (user-confirmed).
+    public func purgeUnreadableRecords() async throws {
+        let (keys, _) = try requireKeys()
+        guard !unreadableRecordIDs.isEmpty else { return }
+        var newRevs = revisions
+        for id in unreadableRecordIDs { newRevs[id] = nil }
+        let mac = VaultState.mac(key: keys.vaultStateKey, vaultID: vaultID, generation: header.generation, entries: newRevs.map { (id: $0.key, revision: $0.value) })
+        try await store.commit(upserts: [], deletes: unreadableRecordIDs, stateMAC: mac)
+        revisions = newRevs; self.stored.stateMAC = mac; unreadableRecordIDs = []
+        integrityWarnings.removeAll { $0 == .unreadableRecords }
+        onStateChanged?(mac)
+        SecureLog.notice(.vault, "unreadable records purged")
     }
     public func setFavorite(_ id: UUID, _ favorite: Bool) async throws {
         guard var item = items[id] else { return }
@@ -132,7 +155,11 @@ public actor VaultSession {
     }
 
     // MARK: lifecycle / manager support
-    func exportRecords() async throws -> [EncryptedRecord] { _ = try requireKeys(); return try await store.allRecords() }
+    func exportRecords() async throws -> [EncryptedRecord] {
+        _ = try requireKeys()
+        let bad = Set(unreadableRecordIDs)
+        return try await store.allRecords().filter { !bad.contains($0.id) }
+    }
     func stateEntries() throws -> [(id: UUID, revision: UInt64)] { _ = try requireKeys(); return entries() }
     func currentKeys() throws -> VaultKeys { try requireKeys().0 }
     func currentCodec() throws -> RecordCodec { try requireKeys().1 }
@@ -140,6 +167,7 @@ public actor VaultSession {
     /// Re-encrypt everything under new keys (rotation). Returns the new records; caller persists them with the header.
     func reencryptAll(under newKeys: VaultKeys, generation: UInt32) throws -> (records: [EncryptedRecord], stateMAC: Data, revisions: [UUID: UInt64]) {
         let (_, oldCodec) = try requireKeys()
+        if !unreadableRecordIDs.isEmpty { SecureLog.notice(.vault, "rotation drops unreadable records", .count(unreadableRecordIDs.count)) }
         let newCodec = RecordCodec(keys: newKeys)
         var out: [EncryptedRecord] = []; var newRevs: [UUID: UInt64] = [:]
         for (id, item) in items {
@@ -160,7 +188,8 @@ public actor VaultSession {
         let records = try await store.allRecords()
         var loaded: [UUID: VaultItem] = [:], revs: [UUID: UInt64] = [:]
         for r in records { let item = try codec.open(r); loaded[item.id] = item; revs[r.id] = r.revision }
-        items = loaded; revisions = revs
+        items = loaded; revisions = revs; unreadableRecordIDs = []
+        integrityWarnings.removeAll { $0 == .unreadableRecords }
     }
 
     /// Drops every key and all decrypted data. Idempotent.

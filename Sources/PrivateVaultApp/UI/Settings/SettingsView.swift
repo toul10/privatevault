@@ -73,6 +73,9 @@ struct SecuritySettings: View {
                 if !model.secretKeyOnDevice {
                     Label("Your Secret Key is not stored on this Mac. You will be asked for the Recovery Kit when unlocking.", systemImage: "key").foregroundStyle(.orange).font(.callout)
                 }
+                if !model.secretKeyHardwareBound {
+                    Label("This Mac has no Secure Enclave: the Secret Key is stored in the Keychain protected only by your login password. Use a strong login password and FileVault.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                }
             }
             .disabled(model.phase != .unlocked)
             Section("Danger zone") {
@@ -175,6 +178,7 @@ struct ShowKitSheet: View {
     let mode: Mode
     @State private var password = ""
     @State private var kit: String?
+    @State private var kitOnlyCopy = false
     @State private var busy = false
     @State private var error: String?
     @State private var hideAt: Date?
@@ -189,6 +193,9 @@ struct ShowKitSheet: View {
             }
             if let kit {
                 RecoveryKitView(kit: kit)
+                if kitOnlyCopy {
+                    Label("The Keychain refused to store the new Secret Key: this kit is now the ONLY copy. Write it down before closing this window.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                }
                 if mode == .regenerate { Text("Your OLD Recovery Kit no longer works. Old backups stay readable only with the old kit + old password; make a new backup now.").font(.callout).foregroundStyle(.orange) }
                 HStack { Spacer(); Button("Done") { self.kit = nil; dismiss() }.buttonStyle(.borderedProminent) }
             } else {
@@ -212,9 +219,14 @@ struct ShowKitSheet: View {
     private func run() async {
         busy = true; error = nil
         do {
-            kit = mode == .show ? try await model.recoveryKit(password: password) : try await model.regenerateSecretKey(password: password)
+            if mode == .show {
+                kit = try await model.recoveryKit(password: password)
+            } else {
+                let r = try await model.regenerateSecretKey(password: password)
+                kit = r.recoveryKit; kitOnlyCopy = !r.secretKeyStoredOnDevice
+            }
             password = ""
-            hideAt = Date().addingTimeInterval(Self.visibleSeconds); now = Date()
+            hideAt = Date().addingTimeInterval(kitOnlyCopy ? 600 : Self.visibleSeconds); now = Date()
         } catch { self.error = describe(error) }
         busy = false
     }
@@ -260,6 +272,7 @@ struct RestoreSheet: View {
     @State private var kit = ""
     @State private var data: Data?
     @State private var name = ""
+    @State private var info: String?
     @State private var busy = false
     @State private var error: String?
     var body: some View {
@@ -267,6 +280,7 @@ struct RestoreSheet: View {
             Text("Restore encrypted backup").font(.title3.weight(.semibold))
             Text("The current vault on this Mac will be REPLACED by the backup. Items added since the backup was made will be lost.").foregroundStyle(.orange)
             HStack { Button("Choose backup file…") { choose() }; Text(name.isEmpty ? "No file selected" : name).foregroundStyle(.secondary) }
+            if let info { Text(info).font(.callout).foregroundStyle(.secondary) }
             SecureField("Master Password of the backup", text: $password).textFieldStyle(.roundedBorder)
             PlainSecretTextField(placeholder: "Recovery Kit (only if the backup is from a different vault / Secret Key)", text: $kit, monospaced: true)
             ErrorBanner(message: error)
@@ -276,7 +290,13 @@ struct RestoreSheet: View {
     }
     private func choose() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [UTType(filenameExtension: BackupCodec.fileExtension) ?? .data, .data]
-        if panel.runModal() == .OK, let url = panel.url { data = try? Data(contentsOf: url); name = url.lastPathComponent }
+        if panel.runModal() == .OK, let url = panel.url {
+            data = try? Data(contentsOf: url); name = url.lastPathComponent; error = nil
+            if let d = data {
+                do { let i = try model.inspectBackup(d); info = "Backup created \(i.createdAt.formatted(date: .long, time: .shortened)) · \(i.recordCount) items. Check that this date is what you expect." }
+                catch { info = nil; self.error = describe(error) }
+            }
+        }
     }
     private func run() async {
         guard let data else { return }

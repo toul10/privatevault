@@ -32,11 +32,20 @@ public enum HPKEWrap {
     public static func open<K: HPKEDiffieHellmanPrivateKey>(_ blob: HPKEWrappedBlob, privateKey: K, info: Data, aad: Data) throws -> SecureBytes
     where K.PublicKey == P256.KeyAgreement.PublicKey {
         guard blob.version == HPKEWrappedBlob.currentVersion, blob.encapsulatedKey.count == 65 else { throw VaultError.authenticationFailed }
-        let opened: Data
+        var opened: Data
         do {
             var recipient = try HPKE.Recipient(privateKey: privateKey, ciphersuite: ciphersuite, info: info, encapsulatedKey: blob.encapsulatedKey)
             opened = try recipient.open(blob.ciphertext, authenticating: aad)
-        } catch { throw VaultError.authenticationFailed }
+        } catch is CryptoKitError {
+            throw VaultError.authenticationFailed
+        } catch let e as VaultError {
+            throw e
+        } catch {
+            // Secure-Enclave / LocalAuthentication failures (user cancel, biometry lockout, key unusable) are
+            // reported as-is so the caller can map them; they are NOT authentication failures of the ciphertext.
+            throw error
+        }
+        defer { opened.wipe() }
         guard opened.count > 32, opened.prefix(32) == commitmentPrefix else { throw VaultError.authenticationFailed }
         return SecureBytes(copying: opened.suffix(from: 32))
     }

@@ -17,6 +17,7 @@ struct OnboardingView: View {
     @State private var restoreKit = ""
     @State private var restoreData: Data?
     @State private var restoreName = ""
+    @State private var restoreInfo: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -85,7 +86,9 @@ struct OnboardingView: View {
     private func showKit(_ kit: String, storedOnDevice: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Your Recovery Kit").font(.title.weight(.semibold))
-            Text("This is your Secret Key. Together with your Master Password it is the only way to open your vault on another Mac or from a backup. It is stored on this Mac protected by the Secure Enclave, but you MUST keep a copy on paper.")
+            Text(model.secretKeyHardwareBound
+                 ? "This is your Secret Key. Together with your Master Password it is the only way to open your vault on another Mac or from a backup. It is stored on this Mac protected by the Secure Enclave, but you MUST keep a copy on paper."
+                 : "This is your Secret Key. Together with your Master Password it is the only way to open your vault on another Mac or from a backup. This Mac has NO Secure Enclave, so the key is stored in the Keychain protected only by your login password — keep a copy on paper and use a strong login password + FileVault.")
                 .foregroundStyle(.secondary)
             if !storedOnDevice {
                 Label("The Keychain was unavailable: the Secret Key could not be stored on this Mac. You will need to type this kit every time you unlock.", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
@@ -116,6 +119,7 @@ struct OnboardingView: View {
         if panel.runModal() == .OK, let url = panel.url {
             let text = "PrivateVault Recovery Kit\n\nSecret Key:\n\(kit)\n\nKeep this together with your memory of the Master Password. Both are required to open your vault on another Mac or from a backup. There is no other way to recover the vault.\n"
             try? text.write(to: url, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         }
     }
 
@@ -128,6 +132,7 @@ struct OnboardingView: View {
                 Button("Choose backup file…") { chooseBackup() }
                 Text(restoreName.isEmpty ? "No file selected" : restoreName).foregroundStyle(.secondary)
             }
+            if let restoreInfo { Text(restoreInfo).font(.callout).foregroundStyle(.secondary) }
             MasterPasswordField(title: "Master Password", text: $restorePassword)
             PlainSecretTextField(placeholder: "Recovery Kit (PV1-…)", text: $restoreKit, monospaced: true)
             Text("The Recovery Kit can be left empty only if this Mac still holds the vault's Secret Key (e.g. after reinstalling the app).").font(.caption).foregroundStyle(.secondary)
@@ -145,7 +150,11 @@ struct OnboardingView: View {
         panel.allowedContentTypes = [UTType(filenameExtension: BackupCodec.fileExtension) ?? .data, .data]
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            restoreData = try? Data(contentsOf: url); restoreName = url.lastPathComponent
+            restoreData = try? Data(contentsOf: url); restoreName = url.lastPathComponent; error = nil
+            if let d = restoreData {
+                do { let i = try model.inspectBackup(d); restoreInfo = "Backup created \(i.createdAt.formatted(date: .long, time: .shortened)) · \(i.recordCount) items." }
+                catch { restoreInfo = nil; self.error = describe(error) }
+            }
         }
     }
     private func doRestore() async {

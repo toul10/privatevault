@@ -24,4 +24,8 @@ public enum IntegrityWarning: String, Sendable, Equatable {
     case recordStateMismatch
     /// The vault file's header generation is lower than the one this Mac last saw (whole-file rollback / old copy).
     case generationRollback
+    /// The vault file's record state differs from what this Mac last saw at the same generation (older copy restored).
+    case fileRollback
+    /// One or more records could not be decrypted (tampered or corrupted); they are kept but not shown.
+    case unreadableRecords
 }

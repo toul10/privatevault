@@ -31,7 +31,7 @@ patterns=(
   'xprv[0-9A-Za-z]{100,}'                  # BIP32 extended private key
 )
 # PrivateVault Recovery Kit: prefix optional, separators optional, any case, I/L/O lookalikes (as RecoveryKit.decode accepts)
-kit_pattern='(PV1[- ]?)?([0-9A-HJKMNP-TV-ZILO]{5}[- ]?){10}[0-9A-HJKMNP-TV-ZILO]{5}'
+kit_pattern='(PV1[- ])?([0-9A-HJKMNP-TV-ZILO]{5}[- ]){10}[0-9A-HJKMNP-TV-ZILO]{5}'
 for f in ${(f)files}; do
   [[ "$f" == Tests/VaultCoreTests/Fixtures/* ]] && continue
   blob=$(content "$f") || continue

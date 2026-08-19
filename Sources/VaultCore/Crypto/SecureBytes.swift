@@ -62,3 +62,12 @@ public final class SecureBytes: @unchecked Sendable, CustomStringConvertible, Cu
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: []) }
 }
+
+public extension Data {
+    /// Best-effort in-place zeroisation of a Data buffer we own (copy-on-write: only effective for unique buffers).
+    mutating func wipe() {
+        let n = count
+        guard n > 0 else { return }
+        withUnsafeMutableBytes { pv_memzero($0.baseAddress, n) }
+    }
+}

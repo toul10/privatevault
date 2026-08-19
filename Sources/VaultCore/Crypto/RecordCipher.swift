@@ -19,10 +19,12 @@ public enum RecordCipher {
     }
 
     // MARK: Padding
-    /// [u32be length][payload][zeros] padded to 256 B steps up to 4 KiB, then 4 KiB steps.
+    public static let padBucket = 4096
+    /// [u32be length][payload][zeros] padded to a multiple of 4 KiB (minimum 4 KiB), so every ordinary record —
+    /// login, API key, note, recovery codes, wallet with seed phrase — has the same ciphertext size.
     public static func pad(_ payload: Data) -> Data {
         let raw = 4 + payload.count
-        let step = raw <= 4096 ? 256 : 4096
+        let step = padBucket
         let padded = ((raw + step - 1) / step) * step
         var w = ByteWriter()
         w.u32be(UInt32(payload.count)); w.raw(payload)

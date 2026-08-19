@@ -123,15 +123,31 @@ struct MainView: View {
         return hay.contains { $0.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
     }
     private var integrityBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.shield.fill").foregroundStyle(.orange)
-            Text(model.integrityWarnings.contains(.generationRollback)
-                 ? "This vault file is OLDER than the one this Mac last opened (rolled back or restored from an old copy). Check that nothing is missing."
-                 : "Records were changed or deleted outside PrivateVault since the last unlock. Check that nothing is missing.")
-                .font(.callout)
-            Spacer()
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(model.integrityWarnings, id: \.self) { w in
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield.fill").foregroundStyle(.orange)
+                    Text(warningText(w)).font(.callout)
+                    Spacer()
+                    if w == .unreadableRecords {
+                        Button("Remove unreadable records…") { confirmPurge = true }.buttonStyle(.bordered)
+                    }
+                }
+            }
         }
         .padding(10).background(.orange.opacity(0.12))
+        .confirmationDialog("Permanently remove the records that cannot be decrypted?", isPresented: $confirmPurge) {
+            Button("Remove", role: .destructive) { Task { try? await model.purgeUnreadableRecords() } }
+        } message: { Text("They were tampered with or corrupted and cannot be recovered. If you have an older backup, restore it instead.") }
+    }
+    @State private var confirmPurge = false
+    private func warningText(_ w: IntegrityWarning) -> String {
+        switch w {
+        case .generationRollback: return "This vault file is OLDER than the one this Mac last opened (rolled back or restored from an old copy). Check that nothing is missing."
+        case .fileRollback: return "This vault file's contents differ from what this Mac last saw — an older copy may have been put back. Check that nothing is missing."
+        case .recordStateMismatch: return "Records were changed or deleted outside PrivateVault since the last unlock. Check that nothing is missing."
+        case .unreadableRecords: return "Some records could not be decrypted (tampered or corrupted). They are hidden; the rest of the vault is intact."
+        }
     }
 }
 

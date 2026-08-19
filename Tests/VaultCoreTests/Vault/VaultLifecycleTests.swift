@@ -127,50 +127,105 @@ struct VaultLifecycleTests {
         for item in TestEnv.sampleItems() { try await created.session.save(item) }
         await m.lock()
         let path = m.vaultURL.path
-        // 1) flip a byte inside a record blob ⇒ unlock fails (authentication)
+        // 1) flip a byte inside one record blob ⇒ unlock succeeds, that record is quarantined, 4 remain readable
         let db = try SQLiteDatabase(path: path, create: false)
         let rows = try db.query("SELECT id, blob FROM records LIMIT 1", bind: { _ in }) { ($0.blob(0), $0.blob(1)) }
         var blob = rows[0].1; blob[blob.count / 2] ^= 0x01
         try db.run("UPDATE records SET blob = ? WHERE id = ?") { $0.bind(1, blob); $0.bind(2, rows[0].0) }
         db.close()
-        await #expect(throws: VaultError.authenticationFailed) { _ = try await m.unlock(password: TestEnv.password) }
-        // restore the blob, then 2) swap two records' blobs ⇒ fails (AAD binds record id)
+        let s1 = try await m.unlock(password: TestEnv.password)
+        #expect(await s1.integrityWarnings == [.unreadableRecords])
+        #expect(try await s1.count() == 4)
+        #expect(await s1.unreadableRecordIDs == [UUID(rawBytes: rows[0].0)!])
+        // a backup made now excludes the unreadable record and restores cleanly elsewhere
+        let backup = try await m.exportBackup(password: TestEnv.password)
+        let (m2, _, _, _) = TestEnv.makeManager()
+        let restored = try await m2.restoreBackup(backup, password: TestEnv.password, recoveryKit: RecoveryKit.encode(created.secretKey))
+        #expect(try await restored.count() == 4)
+        // the user can purge it
+        try await s1.purgeUnreadableRecords()
+        #expect(await s1.integrityWarnings.isEmpty)
+        await m.lock()
+        let s1b = try await m.unlock(password: TestEnv.password)
+        #expect(await s1b.integrityWarnings.isEmpty); #expect(try await s1b.count() == 4)
+        await m.lock()
+        // 2) swap two records' blobs ⇒ both fail (AAD binds record id) ⇒ quarantined, the other 2 readable
         let db2 = try SQLiteDatabase(path: path, create: false)
-        try db2.run("UPDATE records SET blob = ? WHERE id = ?") { $0.bind(1, rows[0].1); $0.bind(2, rows[0].0) }
         let two = try db2.query("SELECT id, blob FROM records LIMIT 2", bind: { _ in }) { ($0.blob(0), $0.blob(1)) }
         try db2.run("UPDATE records SET blob = ? WHERE id = ?") { $0.bind(1, two[1].1); $0.bind(2, two[0].0) }
         try db2.run("UPDATE records SET blob = ? WHERE id = ?") { $0.bind(1, two[0].1); $0.bind(2, two[1].0) }
         db2.close()
-        await #expect(throws: VaultError.authenticationFailed) { _ = try await m.unlock(password: TestEnv.password) }
+        let s2 = try await m.unlock(password: TestEnv.password)
+        #expect(await s2.integrityWarnings == [.unreadableRecords]); #expect(try await s2.count() == 2)
+        await m.lock()
         let db3 = try SQLiteDatabase(path: path, create: false)
         try db3.run("UPDATE records SET blob = ? WHERE id = ?") { $0.bind(1, two[0].1); $0.bind(2, two[0].0) }
         try db3.run("UPDATE records SET blob = ? WHERE id = ?") { $0.bind(1, two[1].1); $0.bind(2, two[1].0) }
-        // 3) delete a record row behind the app's back ⇒ unlock succeeds with an integrity warning
+        // 3) delete a record row behind the app's back ⇒ unlock succeeds with a state-mismatch warning
         try db3.run("DELETE FROM records WHERE id = ?") { $0.bind(1, two[1].0) }
         db3.close()
-        let s = try await m.unlock(password: TestEnv.password)
-        #expect(await s.integrityWarnings == [.recordStateMismatch])
-        #expect(try await s.count() == 4)
+        let s3 = try await m.unlock(password: TestEnv.password)
+        #expect(await s3.integrityWarnings == [.recordStateMismatch])
+        #expect(try await s3.count() == 3)
         await m.lock()
-        // 4) tamper with the header's KDF params (downgrade) ⇒ authentication fails
+        // 4) tamper with the header's KDF params (downgrade) ⇒ naive edit is caught by the checksum ('corrupted'),
+        //    a smart attacker who also recomputes the checksum gets uniform 'authenticationFailed'
         let db4 = try SQLiteDatabase(path: path, create: false)
-        let hdr = try db4.query("SELECT canonical FROM vault_header", bind: { _ in }) { $0.blob(0) }[0]
-        var h = try VaultHeader.parse(canonical: hdr); h.kdf = KDFParameters(memoryKiB: 8192, passes: 2, lanes: 1)
+        let hdr = try db4.query("SELECT canonical, wrapped_vmk FROM vault_header", bind: { _ in }) { ($0.blob(0), $0.blob(1)) }[0]
+        var h = try VaultHeader.parse(canonical: hdr.0); h.kdf = KDFParameters(memoryKiB: 8192, passes: 2, lanes: 1)
         try db4.run("UPDATE vault_header SET canonical = ?") { $0.bind(1, h.canonicalBytes) }
         db4.close()
+        await #expect(throws: VaultError.corrupted("header checksum")) { _ = try await m.unlock(password: TestEnv.password) }
+        let db4b = try SQLiteDatabase(path: path, create: false)
+        try db4b.run("UPDATE vault_header SET header_sha256 = ?") { $0.bind(1, VaultHeader.sha256(canonical: h.canonicalBytes, wrappedVMK: hdr.1)) }
+        db4b.close()
         await #expect(throws: VaultError.authenticationFailed) { _ = try await m.unlock(password: TestEnv.password) }
         // 5) absurd KDF params ⇒ rejected before any allocation (invalidHeader, not a crash or a hang)
         let db5 = try SQLiteDatabase(path: path, create: false)
-        var huge = try VaultHeader.parse(canonical: hdr); huge.kdf = KDFParameters(memoryKiB: 4 * 1024 * 1024, passes: 3, lanes: 1)
-        try db5.run("UPDATE vault_header SET canonical = ?") { $0.bind(1, huge.canonicalBytes) }
+        var huge = try VaultHeader.parse(canonical: hdr.0); huge.kdf = KDFParameters(memoryKiB: 4 * 1024 * 1024, passes: 3, lanes: 1)
+        try db5.run("UPDATE vault_header SET canonical = ?, header_sha256 = ?") { $0.bind(1, huge.canonicalBytes); $0.bind(2, VaultHeader.sha256(canonical: huge.canonicalBytes, wrappedVMK: hdr.1)) }
         db5.close()
         await #expect(throws: VaultError.invalidHeader("KDF parameters out of bounds")) { _ = try await m.unlock(password: TestEnv.password) }
         // 6) newer format version ⇒ unsupportedFormat
         let db6 = try SQLiteDatabase(path: path, create: false)
-        var newer = try VaultHeader.parse(canonical: hdr); newer.format = 9
-        try db6.run("UPDATE vault_header SET canonical = ?") { $0.bind(1, newer.canonicalBytes) }
+        var newer = try VaultHeader.parse(canonical: hdr.0); newer.format = 9
+        try db6.run("UPDATE vault_header SET canonical = ?, header_sha256 = ?") { $0.bind(1, newer.canonicalBytes); $0.bind(2, VaultHeader.sha256(canonical: newer.canonicalBytes, wrappedVMK: hdr.1)) }
         db6.close()
         await #expect(throws: VaultError.unsupportedFormat(9)) { _ = try await m.unlock(password: TestEnv.password) }
+    }
+
+    @Test func whole_file_rollback_same_generation_is_detected() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        let created = try await m.createVault(password: TestEnv.password)
+        try await created.session.save(TestEnv.sampleItems()[0])
+        await m.lock()
+        let old = try Data(contentsOf: m.vaultURL)
+        let s = try await m.unlock(password: TestEnv.password)
+        try await s.save(TestEnv.sampleItems()[1]); try await s.save(TestEnv.sampleItems()[2])
+        await m.lock()
+        try old.write(to: m.vaultURL)          // attacker puts back last week's copy (same header generation)
+        let s2 = try await m.unlock(password: TestEnv.password)
+        #expect(await s2.integrityWarnings == [.fileRollback])
+        #expect(try await s2.count() == 1)
+        await m.lock()
+        // acknowledged by continuing: the next unlock is clean
+        let s3 = try await m.unlock(password: TestEnv.password)
+        #expect(await s3.integrityWarnings.isEmpty)
+    }
+
+    @Test func touch_id_path_refuses_a_modified_header() async throws {
+        let (m, _, _, _) = TestEnv.makeManager()
+        let s = try await m.createVault(password: TestEnv.password).session
+        try await s.save(TestEnv.sampleItems()[0])
+        try await m.enableBiometricUnlock()
+        await m.lock()
+        let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        let hdr = try db.query("SELECT canonical, wrapped_vmk FROM vault_header", bind: { _ in }) { ($0.blob(0), $0.blob(1)) }[0]
+        var h = try VaultHeader.parse(canonical: hdr.0); h.salt = Data(repeating: 7, count: 16)
+        try db.run("UPDATE vault_header SET canonical = ?, header_sha256 = ?") { $0.bind(1, h.canonicalBytes); $0.bind(2, VaultHeader.sha256(canonical: h.canonicalBytes, wrappedVMK: hdr.1)) }
+        db.close()
+        await #expect(throws: VaultError.biometryInvalidated) { _ = try await m.unlockWithBiometrics() }
+        await #expect(throws: VaultError.authenticationFailed) { _ = try await m.unlock(password: TestEnv.password) }
     }
 
     @Test func whole_file_rollback_is_detected_via_pinned_generation() async throws {

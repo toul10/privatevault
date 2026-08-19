@@ -60,13 +60,22 @@ struct VersionPathTests {
         try db3.exec("DELETE FROM meta"); db3.close()
         await #expect(throws: VaultError.corrupted("schema_version")) { _ = try await m.unlock(password: TestEnv.password) }
     }
-    @Test func unknown_record_crypto_version_aborts_unlock() async throws {
+    @Test func unknown_record_crypto_version_is_quarantined_or_aborts_when_everything_is_affected() async throws {
         let (m, _, _, _) = TestEnv.makeManager()
         let s = try await m.createVault(password: TestEnv.password).session
-        try await s.save(TestEnv.sampleItems()[0])
+        for item in TestEnv.sampleItems().prefix(2) { try await s.save(item) }
         await m.lock()
+        // one record with a future crypto_version ⇒ unlock works, record quarantined
         let db = try SQLiteDatabase(path: m.vaultURL.path, create: false)
-        try db.exec("UPDATE records SET crypto_version = 2"); db.close()
-        await #expect(throws: VaultError.unsupportedFormat(2)) { _ = try await m.unlock(password: TestEnv.password) }
+        let id = try db.query("SELECT id FROM records LIMIT 1", bind: { _ in }) { $0.blob(0) }[0]
+        try db.run("UPDATE records SET crypto_version = 2 WHERE id = ?") { $0.bind(1, id) }; db.close()
+        let s2 = try await m.unlock(password: TestEnv.password)
+        #expect(await s2.integrityWarnings == [.unreadableRecords])
+        #expect(try await s2.count() == 1)
+        await m.lock()
+        // every record affected ⇒ refuse (this is not a partial-recovery situation)
+        let db2 = try SQLiteDatabase(path: m.vaultURL.path, create: false)
+        try db2.exec("UPDATE records SET crypto_version = 2"); db2.close()
+        await #expect(throws: VaultError.corrupted("all records unreadable")) { _ = try await m.unlock(password: TestEnv.password) }
     }
 }

@@ -54,9 +54,13 @@ public enum BackupCodec {
         public let header: VaultHeader
         public let stored: StoredHeader
         public let records: [EncryptedRecord]
-        public let createdAt: Date
+        public let createdAtUnix: Int64
         public let document: Document
+        public var createdAt: Date { Date(timeIntervalSince1970: TimeInterval(createdAtUnix)) }
     }
+    /// Sane bounds for the (untrusted) creation timestamp: 2020-01-01 … 2200-01-01.
+    static let minCreatedAt: Int64 = 1_577_836_800
+    static let maxCreatedAt: Int64 = 7_258_118_400
 
     /// Structural validation of untrusted input. No cryptography, no allocation beyond the file itself.
     public static func parse(_ data: Data) throws -> Parsed {
@@ -67,6 +71,7 @@ public enum BackupCodec {
         guard doc.version != 0 else { throw VaultError.backupInvalid("version") }
         guard doc.version <= version else { throw VaultError.unsupportedFormat(doc.version) }
         guard doc.records.count <= maxRecords else { throw VaultError.backupInvalid("too many records") }
+        guard doc.createdAt >= minCreatedAt, doc.createdAt <= maxCreatedAt else { throw VaultError.backupInvalid("creation time") }
         let header: VaultHeader
         do { header = try VaultHeader.parse(canonical: doc.header.canonical) } catch let e as VaultError {
             if case .unsupportedFormat = e { throw e }
@@ -86,14 +91,14 @@ public enum BackupCodec {
             records.append(EncryptedRecord(id: id, cryptoVersion: r.cryptoVersion, revision: r.revision, blob: r.blob))
         }
         let stored = StoredHeader(canonical: doc.header.canonical, wrappedVMK: doc.header.wrappedVMK, headerSHA256: doc.header.headerSHA256, skID: doc.header.skID, stateMAC: Data())
-        return Parsed(header: header, stored: stored, records: records, createdAt: Date(timeIntervalSince1970: TimeInterval(doc.createdAt)), document: doc)
+        return Parsed(header: header, stored: stored, records: records, createdAtUnix: doc.createdAt, document: doc)
     }
 
     /// Verifies the manifest and every record's authentication tag with the vault keys derived from MP + SK.
     /// Returns the state MAC to store so the restored vault passes its own integrity check.
     public static func verify(_ parsed: Parsed, keys: VaultKeys) throws -> Data {
         guard keys.vaultID == parsed.header.vaultID else { throw VaultError.authenticationFailed }
-        let aad = manifestAAD(vaultID: parsed.header.vaultID, createdAt: Int64(parsed.createdAt.timeIntervalSince1970))
+        let aad = manifestAAD(vaultID: parsed.header.vaultID, createdAt: parsed.createdAtUnix)
         let plain: Data
         do {
             let box = try AES.GCM.SealedBox(combined: parsed.document.manifest.nonce + parsed.document.manifest.ciphertext)

@@ -92,6 +92,8 @@ public final class InMemorySecretStore: SecretStore, @unchecked Sendable {
     private var items: [String: Data] = [:]
     private let lock = NSLock()
     public var unavailable = false
+    /// Test hook: reads work, writes/deletes fail (simulates a Keychain that refuses new items).
+    public var writesFail = false
     public init() {}
     public func read(_ account: String) throws -> Data? {
         lock.lock(); defer { lock.unlock() }
@@ -100,7 +102,7 @@ public final class InMemorySecretStore: SecretStore, @unchecked Sendable {
     }
     public func write(_ account: String, data: Data) throws {
         lock.lock(); defer { lock.unlock() }
-        if unavailable { throw VaultError.keychainUnavailable }
+        if unavailable || writesFail { throw VaultError.keychainUnavailable }
         items[account] = data
     }
     public func delete(_ account: String) throws {

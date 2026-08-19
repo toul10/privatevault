@@ -67,19 +67,17 @@ public final class SystemSecureEnclave: SecureEnclaveService {
             return try HPKEWrap.open(blob, privateKey: priv, info: info, aad: aad)
         } catch let e as VaultError {
             throw e
-        } catch let e as LAError {
-            switch e.code {
-            case .userCancel, .appCancel, .systemCancel: throw VaultError.userCancelled
-            case .biometryNotAvailable, .biometryNotEnrolled, .biometryLockout: throw VaultError.biometryUnavailable
-            default: throw VaultError.secureEnclaveFailed("la \(e.code.rawValue)")
-            }
         } catch {
-            // CryptoKit wraps SEP/LA failures; after a fingerprint change the key is permanently unusable.
             let ns = error as NSError
             if ns.domain == LAError.errorDomain {
-                if ns.code == LAError.userCancel.rawValue || ns.code == LAError.appCancel.rawValue || ns.code == LAError.systemCancel.rawValue { throw VaultError.userCancelled }
-                if ns.code == LAError.biometryNotAvailable.rawValue || ns.code == LAError.biometryLockout.rawValue { throw VaultError.biometryUnavailable }
+                switch LAError.Code(rawValue: ns.code) {
+                case .userCancel, .appCancel, .systemCancel: throw VaultError.userCancelled
+                case .biometryNotAvailable, .biometryNotEnrolled, .biometryLockout: throw VaultError.biometryUnavailable
+                default: break
+                }
             }
+            // Any other Secure-Enclave failure (key unusable after fingerprint change, SEP error) — the caller
+            // decides between "invalidated" (bio path) and "unusable on this device" (secret key path).
             throw VaultError.secureEnclaveFailed("open")
         }
     }

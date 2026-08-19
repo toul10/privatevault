@@ -42,6 +42,10 @@ public struct KDFParameters: Equatable, Sendable, Codable {
     public var meetsFloor: Bool { isAtLeast(Self.floor) }
     /// True when a vault with these parameters should be upgraded on the next password unlock.
     public var needsUpgrade: Bool { !isAtLeast(Self.current) }
+    /// Element-wise maximum with `policy` (never lowers memory or passes; lanes follow the policy but m ≥ 8·p holds).
+    public func upgraded(to policy: KDFParameters) -> KDFParameters {
+        KDFParameters(memoryKiB: max(memoryKiB, policy.memoryKiB), passes: max(passes, policy.passes), lanes: policy.lanes)
+    }
 }
 
 /// Thin, safe wrapper around the vendored PHC reference Argon2id.

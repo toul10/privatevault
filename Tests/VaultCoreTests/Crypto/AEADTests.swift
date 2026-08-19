@@ -46,15 +46,18 @@ struct AEADTests {
         let payload = Data("{\"title\":\"Binance\"}".utf8)
         let blob = try RecordCipher.seal(payload: payload, key: key, aad: aad)
         #expect(try RecordCipher.open(blob: blob, key: key, aad: aad) == payload)
-        // padded plaintext = 256 bytes ⇒ blob = 1 + 12 + 256 + 16
-        #expect(blob.count == 1 + 12 + 256 + 16)
+        // every ordinary record pads to one 4 KiB bucket ⇒ blob = 1 + 12 + 4096 + 16 (item kind not inferable from size)
+        #expect(blob.count == 1 + 12 + 4096 + 16)
         let big = Data(repeating: 0x41, count: 5000)
         let blob2 = try RecordCipher.seal(payload: big, key: key, aad: aad)
         #expect(blob2.count == 1 + 12 + 8192 + 16)
         #expect(try RecordCipher.open(blob: blob2, key: key, aad: aad) == big)
         let empty = try RecordCipher.seal(payload: Data(), key: key, aad: aad)
         #expect(try RecordCipher.open(blob: empty, key: key, aad: aad) == Data())
-        #expect(empty.count == 1 + 12 + 256 + 16)
+        #expect(empty.count == 1 + 12 + 4096 + 16)
+        // a realistic login, an API key, a note, recovery codes and a wallet with a 24-word seed all share the bucket
+        let samples = [Data(repeating: 0x61, count: 540), Data(repeating: 0x61, count: 1100), Data(repeating: 0x61, count: 280)]
+        #expect(Set(try samples.map { try RecordCipher.seal(payload: $0, key: key, aad: aad).count }).count == 1)
     }
     @Test func identical_plaintext_gives_different_ciphertext_and_nonce() throws {
         var blobs = Set<Data>(), nonces = Set<Data>()
@@ -88,7 +91,7 @@ struct AEADTests {
     @Test func unpad_rejects_nonzero_padding_and_bad_length() {
         var p = RecordCipher.pad(Data("x".utf8)); p[p.count - 1] = 1
         #expect(throws: VaultError.self) { _ = try RecordCipher.unpad(p) }
-        var q = RecordCipher.pad(Data("x".utf8)); q[3] = 0xff
+        var q = RecordCipher.pad(Data("x".utf8)); q[0] = 0xff   // absurd length prefix
         #expect(throws: VaultError.self) { _ = try RecordCipher.unpad(q) }
     }
     @Test func tier2_box_roundtrip_and_binding() throws {
