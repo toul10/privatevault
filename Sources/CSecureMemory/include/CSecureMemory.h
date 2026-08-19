@@ -13,3 +13,7 @@ bool pv_mlock(void *ptr, size_t len);
 bool pv_munlock(void *ptr, size_t len);
 
 #endif
+
+/// sqlite3_db_config(SQLITE_DBCONFIG_DEFENSIVE) is variadic and not callable from Swift; this wraps it.
+/// `db` is a sqlite3* handle. Returns the SQLite result code.
+int pv_sqlite_set_defensive(void *db);

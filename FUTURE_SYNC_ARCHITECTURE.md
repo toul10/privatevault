@@ -113,8 +113,8 @@ confirmed by the server and a `pending` flag; the device's cursor; the trusted r
   record** (new random id) whose encrypted JSON carries `conflictOf: id, device, time`. Nothing is overwritten
   silently; the owner merges by hand.
 - **Tombstones as encrypted records:** deletion writes a new revision whose plaintext is `kind = tombstone`,
-  padded to the **same size class** as the version it replaces (spec §4.3), so the server cannot tell a deletion from
-  an edit. Devices delete locally when they pull a tombstone; the row may be garbage-collected once every enrolled
+  padded to the **same size class** as the version it replaces (an extension of the §4.3 padding, which in V1 is
+  driven by the plaintext length alone), so the server cannot tell a deletion from an edit. Devices delete locally when they pull a tombstone; the row may be garbage-collected once every enrolled
   device's cursor has passed it.
 
 ### 4.3 Header sync: forward only
@@ -281,7 +281,7 @@ Also needed: a `SyncEngine` (reconciliation, conflict copies, tombstones, manife
 in-memory fake transport **and** a deliberately malicious fake (replays, withholding, forks, fake roster entries);
 `VaultItem.Kind.tombstone` and `conflictOf` metadata; a `sync_state` table and migration; the new versioned labels
 (`enroll-commit`, `enroll-sas`, `hpke/enroll-sk` with aad purpose `0x03`, `sync-challenge`, `device-manifest`)
-in `CanonicalEncoding` with golden tests; a Keychain/SE-backed `DeviceKeyStore` plus fakes. Two additions to the
+next to the V1 labels (`KDFLabel` in `Sources/VaultCore/Crypto/KeyDerivation.swift`) with golden tests; a Keychain/SE-backed `DeviceKeyStore` plus fakes. Two additions to the
 §1 primitive table, both Apple-only (still no third-party crypto): Ed25519 via CryptoKit `Curve25519.Signing`,
 and TLS with pinning via `URLSession`.
 

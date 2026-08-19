@@ -30,9 +30,10 @@ API). Argon2id is the algorithm the architecture requires, so it has to come fro
 **Why the PHC reference and not something else.**
 - It is the canonical implementation by the Argon2 authors, the reference for RFC 9106, about 3.3k lines of plain
   C in 13 files — small enough to read end to end.
-- Its context API (`argon2_ctx`) supports lanes `p > 1` (the header allows `p ∈ [1, 4]`) and reproduces the
-  RFC 9106 §5.3 known-answer vector (which needs secret and associated-data inputs). The test suite pins that vector
-  plus four OpenSSL-derived `p = 1` vectors; OpenSSL 3.6.3 on this Mac is the independent oracle.
+- It supports lanes `p > 1` (the header allows `p ∈ [1, 4]`) and, through its context API (`argon2_ctx`), reproduces
+  the RFC 9106 §5.3 known-answer vector (which needs secret and associated-data inputs that the vault never uses).
+  The test suite pins that vector plus OpenSSL-derived vectors with `p = 1` and `p = 4`, including one through the
+  NFC password path; OpenSSL 3.6.3 on this Mac is the independent oracle.
 - **libsodium** was rejected: `crypto_pwhash` fixes `p = 1`, a 16-byte salt and no secret/AD inputs (cannot run
   the RFC vector), and its tree expects autotools-generated headers — vendoring ~100k lines for one primitive
   enlarges the trusted code base for no gain.
@@ -53,10 +54,12 @@ cd Sources/CArgon2 && grep '^- `' VENDOR.md | sed -E 's/^- `(.*)` ([0-9a-f]{64})
 
 **Build.** Plain SwiftPM C target, `cSettings: headerSearchPath("."), unsafeFlags(["-O2"])` (allowed for the
 root package). `ref.c` is the portable implementation and is what runs on Apple silicon; `thread.c` is included so
-`p > 1` works via pthreads. The Swift wrapper in `VaultCore` calls the context API with type Argon2id, version
-`0x13`, and flags `ARGON2_FLAG_CLEAR_PASSWORD | ARGON2_FLAG_CLEAR_SECRET`, so the library wipes the password buffer
-it was given (we pass no secret). The reference already wipes its own working memory with `memset_s` on macOS
-(`clear_internal_memory`, on by default).
+`p > 1` works via pthreads. The Swift wrapper in `VaultCore` (`Crypto/Argon2id.swift`) calls `argon2id_hash_raw`
+(type Argon2id, version `0x13`, default flags) after validating the parameter bounds of §2.3 and the 16-byte salt; the
+password and the 32-byte output travel in `SecureBytes`, so wiping the password buffer is done by **our** code, not
+by the library. The reference wipes its own working memory by default (`clear_internal_memory` →
+`secure_wipe_memory`); on macOS that path is a volatile function-pointer `memset` marked `NOT_OPTIMIZED` (the
+`memset_s` branch is not selected because `memset_s` is a function, not a macro, in Apple's libc).
 
 **What we deliberately do not use.** `opt.c` (x86 SSE/AVX intrinsics — not vendored), `bench.c`, `genkat.c`,
 `run.c`, `test.c`, the command-line tool, and the `$argon2id$…` encoded-string API (we store raw 32-byte outputs).

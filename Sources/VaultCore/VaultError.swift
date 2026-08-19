@@ -25,6 +25,8 @@ public enum VaultError: Error, Equatable, Sendable {
     case backupInvalid(String)
     case recoveryKitInvalid(String)
     case vaultLocked
+    /// The Secret Key is not available on this device: the user must enter the Recovery Kit.
+    case secretKeyRequired
     case vaultAlreadyExists
     case vaultNotFound
     case invalidInput(String)

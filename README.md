@@ -26,7 +26,7 @@ backups.
 3. The KEK needs **two** secrets: your Master Password (stretched with Argon2id) **and** a random 256-bit Secret Key.
 4. The Secret Key lives outside the vault file: Secure-Enclave-wrapped in the macOS Keychain and on paper in your Recovery Kit.
 5. So a stolen vault file, backup or Time Machine copy cannot even *start* a password-guessing attack.
-6. Inside each record everything is ciphertext — type, title, username, timestamps; only a random id, a revision counter and a padded size are visible.
+6. Inside each record everything is ciphertext — type, title, username, timestamps; only a random id, a format-version number, a revision counter and a padded size are visible.
 7. Seed phrases and private keys sit in an inner encrypted box, opened only on **Reveal** after Touch ID / login password.
 8. A keyed state MAC detects deleted or rolled-back records; backups are authenticated (but not "fresh").
 9. Touch ID is a convenience unlock enforced by the Secure Enclave; it never stores your password.
@@ -52,8 +52,9 @@ open dist/PrivateVault.app
 First-launch notes:
 - The app is **ad-hoc signed** (no certificate), sandboxed, with the hardened runtime. A locally built app carries no
   quarantine attribute, so Gatekeeper does not block it. Only run builds you made yourself.
-- After a rebuild macOS sees a "new" app: a Keychain prompt may appear once — click **Always Allow**. If the Secret
-  Key cannot be read silently, PrivateVault asks for your Recovery Kit and stores it again.
+- After a rebuild macOS sees a "new" app, so the Keychain item holding your Secret Key can no longer be read silently.
+  PrivateVault never shows a Keychain password prompt on the unlock path: it asks for your **Recovery Kit** once and
+  stores the Secret Key again for the new build (`SECURITY_ARCHITECTURE.md` §8.1). Keep the kit at hand when you rebuild.
 - Nothing is installed system-wide; the vault is
   `~/Library/Containers/com.kostastoulis.privatevault/…/Vault.noindex/vault.sqlite`.
 
@@ -74,9 +75,10 @@ Package.swift                  SwiftPM manifest (macOS 14+, Swift 6)
 Sources/CArgon2/               vendored PHC reference Argon2id (pinned, hash-verified) — the only third-party code
 Sources/CSecureMemory/         memset_s / timingsafe_bcmp / mlock shim
 Sources/VaultCore/             all security logic, no UI
-  Crypto/                      key hierarchy, Argon2id, HKDF, AES-GCM, canonical encodings
+  Crypto/                      key hierarchy, Argon2id, HKDF labels, AES-GCM record envelope, canonical header,
+                               HPKE wrap, SecureBytes, Recovery Kit
   Keychain/  SecureEnclave/    Secret Key and Touch ID blobs (HPKE to Secure Enclave keys)
-  Vault/  Database/            header, unlock, rotation, SQLite store, state MAC
+  Vault/  Database/            unlock, rotation, SQLite store, state MAC
   Models/                      VaultItem, Secret<T> (redacted, codec-guarded)
   Backup/  Logging/  Security/ .privatevault format, SecureLog, process hardening
 Sources/PrivateVaultApp/       App/ UI/ Authentication/ Services/ — thin SwiftUI app

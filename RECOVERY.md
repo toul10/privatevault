@@ -8,11 +8,13 @@ to `SECURITY_ARCHITECTURE.md`, the normative spec.
 | What | Where it lives | Why it matters |
 |---|---|---|
 | **Master Password (MP)** | Only in your memory; the app never stores it, not even for Touch ID (§8.2). | Half of the key. |
-| **Secret Key (SK) — the Recovery Kit** | On this Mac: in the Keychain, wrapped by the Secure Enclave, usable only here (§8.1). On paper: the Recovery Kit, `PV1-XXXXX-XXXXX-…`, 11 groups of 5 characters (§2.4). | The other half. Without it nobody can even *start* guessing the password. |
+| **Secret Key (SK) — the Recovery Kit** | On this Mac: in the Keychain, wrapped by the Secure Enclave, usable only here (§8.1; on a Mac *without* a Secure Enclave it sits in the Keychain protected only by the login password, and the app warns you once). On paper: the Recovery Kit, `PV1-XXXXX-XXXXX-…`, 11 groups of 5 characters (§2.4). | The other half. Without it nobody can even *start* guessing the password. |
 | **Encrypted backups (`.privatevault`)** | Wherever you put them (USB, second disk, cloud). Only ciphertext — no password, no Secret Key, no titles (§9). | The only way back if this Mac is lost or wiped. |
 
 The rule behind every scenario: **the vault opens only with MP + SK, and the data exists only in the vault
-file or in a backup.** No third factor, no hidden copy, no exception.
+file or in a backup.** No third factor, no hidden copy, no exception. (Touch ID is not an exception: it is a
+convenience that lets *this Mac's* Secure Enclave hand back the VMK after a fingerprint, §8.2 — it holds no
+password and works on no other machine; see Scenario C for what it can and cannot do.)
 
 About the kit: shown once at creation (you must re-type one group); shown again later only after re-entering
 the Master Password. It carries a 4-byte `sk_id` so you can match kit and vault. Typing is forgiving (lower
@@ -36,8 +38,8 @@ opens with the password and Secret Key valid **when it was made** (section 8).
 ### C — you lost the Master Password (you have the Mac and the Recovery Kit)
 **Not recoverable by design.** The Recovery Kit is the second half of the key, not a password reset. What is
 left:
-- If you remember *most* of it, keep trying variants at the unlock screen; each attempt costs about a second
-  of Argon2id work, all local.
+- If you remember *most* of it, keep trying variants at the unlock screen; each attempt costs half a second to
+  a second of Argon2id work (§2.3), all local.
 - If Touch ID is enabled and still works, it still unlocks the vault (it holds the VMK, not the password,
   §8.2). Use that session to **move your data out** — reveal and copy every item somewhere safe. Touch ID
   cannot change the password, export a backup or show the Recovery Kit (those require the Master Password,
@@ -81,11 +83,11 @@ read the data: reveal and copy your items out before the vault locks (auto-lock 
 
 ## 6. Keychain item deleted or unreadable
 
-If the Secret-Key item is gone or unreadable (deleted in Keychain Access, a different build of the app, a denied
-prompt) the app asks for the Recovery Kit and stores it again — nothing is lost. If the Touch ID item is gone,
-re-enable Touch ID. If the Keychain is unavailable entirely, the app never writes the key anywhere else: you
-type the Recovery Kit at each unlock (§8.1.4). No kit **and** no Keychain item = Secret Key gone on every copy:
-not recoverable (section 9).
+If the Secret-Key item is gone or unreadable (deleted in Keychain Access, a different build of the app, access
+denied) the app asks for the Recovery Kit and stores it again — nothing is lost; no Keychain password prompt is
+shown on the unlock path (§8.1.3). If the Touch ID item is gone, re-enable Touch ID. If the Keychain is
+unavailable entirely, the app never writes the key anywhere else: you type the Recovery Kit at each unlock
+(§8.1.4). No kit **and** no Keychain item = Secret Key gone on every copy: not recoverable (section 9).
 
 ## 7. Restoring a backup
 
@@ -101,9 +103,12 @@ been substituted). Touch ID must be re-enabled afterwards.
 
 - **Change Master Password** (default): only the header is re-wrapped, records untouched (§7.3). Old backups
   still open — with the **old** password and the same Secret Key.
-- **Key rotation** (optional on password change) and **Regenerate Secret Key** (always rotates): every record
-  is re-encrypted under a new Vault Master Key (§7.4). Old backups open only with the password *and* the
-  Recovery Kit valid when they were made. Destroy the old kit and those backups become unreadable forever.
+- **Key rotation** (optional on password change): every record is re-encrypted under a new Vault Master Key
+  (§7.4); the Secret Key and the Recovery Kit stay the **same**. Old backups open only with the *old* password
+  and the (unchanged) kit — after rotation, new records are not readable through an old header or old backup.
+- **Regenerate Secret Key** (always rotates): new Secret Key, new kit, new VMK, every record re-encrypted (§7.4).
+  Old backups open only with the password *and* the **old** kit valid when they were made. Destroy the old kit
+  and those backups become unreadable forever — never destroy a kit while a backup that needs it still matters.
 - Rule: after any of these, **make a new backup immediately**; keep old kits labelled until the backups that
   need them are deleted.
 

@@ -24,7 +24,8 @@ let package = Package(
         // Tiny C shim exposing memset_s / timingsafe_bcmp / mlock to Swift.
         .target(
             name: "CSecureMemory",
-            path: "Sources/CSecureMemory"
+            path: "Sources/CSecureMemory",
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         // All cryptography, storage, models, backup — no UI, fully testable.
         .target(

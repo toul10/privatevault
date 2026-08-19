@@ -15,7 +15,7 @@ universal recovery key.
 | **Tier 2** | Wallet seed phrases, wallet private keys | Inner AEAD box under `tier2Key` (AAD `"tier2" ‖ vaultID ‖ recordID ‖ fieldName`) *inside* the encrypted record (§4.4). Stays ciphertext in memory until **Reveal**, which needs system authentication and auto-hides after 30 s (§8.3). |
 | **Tier 1** | Login passwords, API keys/secrets, recovery codes, secure-note bodies, wallet notes / derivation path | Record envelope: AES-256-GCM under a per-record key derived from `recordRootKey` (§4.2). In memory only while unlocked. |
 | **Encrypted metadata** | Item type, title, website, username, tags, favourite, timestamps, public addresses, blockchain | Inside the same ciphertext; padded to size buckets (§4.1, §4.3). A file thief cannot tell a wallet from a login. |
-| **Visible metadata** (accepted leak) | Record count, random record ids, revision counters, padded size class, vault UUID, creation time, generation, KDF parameters + salt, `sk_id`, `header_sha256` | Plaintext by design; none of it helps decrypt anything (§11). |
+| **Visible metadata** (accepted leak) | Record count, random record ids, `crypto_version`, revision counters, padded size class, vault UUID, *vault* creation time (record timestamps are encrypted), format version, generation, KDF parameters + salt, `sk_id`, `header_sha256`, `state_mac`, `wrapped_VMK` (ciphertext) | Plaintext by design; none of it helps decrypt anything (§11). |
 
 Tier 2 is a *handling* distinction (shorter plaintext lifetime, extra gate), not a separate trust boundary:
 `tier2Key` is derived from the VMK like every other subkey (§4.4).
@@ -48,12 +48,14 @@ risk) · **Mechanism** (the concrete control in the spec).
 
 ### 3.1 Thief copies `vault.sqlite` only
 
-- **Gets**: canonical header (vault UUID, Argon2id parameters, salt, generation, creation time), `wrapped_VMK` (92 bytes
-  of ciphertext), `header_sha256`, `sk_id`, `state_mac`, each record's random id, revision, crypto_version and padded
-  ciphertext; maybe old ciphertext in free pages (§5.1).
+- **Gets**: canonical header (format version, vault UUID, Argon2id parameters, salt, generation, vault creation time),
+  `wrapped_VMK` (92 bytes: nonce ‖ ciphertext ‖ tag), `header_sha256`, `sk_id`, `state_mac`, each record's random id,
+  revision, crypto_version and padded ciphertext; maybe old ciphertext in free pages, the rollback journal, APFS
+  snapshots or Time Machine (§5.1).
 - **Stopped by**: the KEK needs **both** MPK and SKK. Without the 256-bit SK there is no candidate KEK and therefore
   *nothing to test a password guess against* — offline cracking cannot even start, however weak the MP is.
-- **Residual**: the visible metadata of §1. Nothing else.
+- **Residual**: the visible metadata of §1, plus — from old ciphertext blocks — the fact *that* a record changed
+  (never what changed, §5.1). Nothing else.
 - **Mechanism**: `KEK = HKDF(MPK ‖ SKK)`; VMK wrapped under KEK with the header as AAD (§2, §3.2); per-record keys and
   padding (§4.2, §4.3); no stored verifier of MP or SK (§3.2).
 
@@ -63,7 +65,8 @@ risk) · **Mechanism** (the concrete control in the spec).
 - **Stopped by**: the SK is **not** in the container (the Keychain lives outside it); `UserDefaults` holds only
   non-sensitive settings; window restoration and `@SceneStorage` disabled; no Spotlight index; no plaintext temp files
   (§9, §10); `Secret<T>` refuses any encoder other than the record codec (§6).
-- **Residual**: identical to 3.1. A test scans the container for sentinel secrets after every flow.
+- **Residual**: identical to 3.1. Required check: a test that exercises every flow with sentinel secrets and then
+  searches the whole container (Preferences, Saved Application State, Caches, the vault file) for them.
 - **Mechanism**: SK storage rules (§8.1 items 1–4); `Secret<T>` codec guard; "no leaks to disk" list (§10).
 
 ### 3.3 Thief gets a Time Machine backup (including the login keychain)
@@ -111,7 +114,7 @@ risk) · **Mechanism** (the concrete control in the spec).
   lock (idle, sleep, screen lock) shortens the window; §7.5 defines what Lock drops.
 - **Residual**: an attacker who **knows the login password** can read the SE-wrapped SK and, because that SE key has no
   user-presence requirement, let *this Mac's* SEP unwrap it → SK → scenario 3.12 (MP guessing at Argon2id cost). They
-  can also swap the ad-hoc-signed bundle for a trojan that captures the next MP (§4).
+  can also swap the ad-hoc-signed bundle for a trojan that captures the next MP (section 4 below, spec §10).
 - **Mechanism**: MP + SK KEK; `[.biometryCurrentSet]` Touch ID key; app-bound Keychain item ACL (no silent read by other
   builds/processes); hardened runtime without `get-task-allow`; Lock (§7.5, §8.1, §8.2, §10).
 
@@ -146,7 +149,8 @@ risk) · **Mechanism** (the concrete control in the spec).
   logged; assertions never interpolate values; `RLIMIT_CORE = 0`; macOS swap is encrypted; a test asserts sentinel
   secrets never appear in `OSLogStore` (§10).
 - **Residual**: a crash report holds register/stack snippets; Swift `String`/`Data` copies used by the UI cannot all be
-  zeroised (§4). Keys themselves live in `SecureBytes` (`mlock` + `memset_s`) or CryptoKit `SymmetricKey`.
+  zeroised (section 4 below, spec §10). Keys themselves live in `SecureBytes` (`mlock` + `memset_s`) or CryptoKit
+  `SymmetricKey`.
 - **Mechanism**: §10 "Logging", "Crash reports", "Memory wiping".
 
 ### 3.10 Tampering: records, header, backup, rollback, record swap, KDF downgrade
@@ -183,9 +187,9 @@ by someone who cannot decrypt, which is the at-rest threat model (§5.3).
 - **Gets**: SK → SKK. Combined with any copy from 3.1–3.4 the vault becomes **MP-only**; `sk_id` tells them which vault.
 - **Stopped by**: the Master Password — now the *only* barrier, at Argon2id cost per guess (3.11).
 - **Residual**: a weak or observed MP means the vault is lost. **Remedy**: "Regenerate Secret Key" forces a key
-  rotation — new SK, new VMK, every record re-encrypted, new header, Touch ID blob re-wrapped, `VACUUM` (§7.4). The
-  photographed kit and all *old* headers/backups then no longer decrypt current records; backups made *before* the
-  rotation still open with old MP + old SK and must be deleted by the user.
+  rotation — new SK, new VMK, every record re-encrypted, new header, old Touch ID blob replaced (re-wrapped under the
+  new VMK, §7.4), `VACUUM`. The photographed kit and all *old* headers/backups then no longer decrypt current
+  records; backups made *before* the rotation still open with old MP + old SK and must be deleted by the user.
 - **Mechanism**: §2.1 "Why two secrets"; §2.2 password policy; §7.4 rotation; §2.4 kit format.
 
 ---
@@ -201,8 +205,8 @@ by someone who cannot decrypt, which is the at-rest threat model (§5.3).
 - **Screen capture / screen sharing / Accessibility API abuse**: `NSWindow.sharingType = .none` (default on) and
   `accessibilityProtectedContent` reduce exposure; a process granted Screen Recording or Accessibility still reads
   what is shown.
-- **A trojaned app bundle**: the ad-hoc signature has no certificate chain; anyone who can write to `/Applications` can
-  capture the next MP (§10).
+- **A trojaned app bundle**: the ad-hoc signature has no certificate chain; anyone who can write to wherever the bundle
+  lives (`dist/`, `/Applications`, …) can replace it and capture the next MP (§10).
 - **Weak login password + no FileVault**: the login keychain and the disk are only as strong as the login password.
 - **Swift memory zeroisation**: `SecureBytes` and `SymmetricKey` are wiped; `String`/`Data` copies made by the runtime
   and SwiftUI cannot all be guaranteed zeroised (§10).
@@ -217,16 +221,16 @@ by someone who cannot decrypt, which is the at-rest threat model (§5.3).
 
 | Threat | Control | Where (under `Sources/VaultCore/`) |
 |---|---|---|
-| File/backup theft, offline MP guessing | Two-secret KEK `HKDF(MPK ‖ SKK)`, Argon2id floor + bounds, key-committing VMK wrap, uniform `authenticationFailed` | `Crypto/` (KeyHierarchy, Argon2, KDFParameters), `Vault/` (VaultHeader) |
-| Record tampering, swap, transplant, rollback | Per-record HKDF key, AEAD with `"record"` AAD incl. `revision`, `state_mac`, generation mirror | `Crypto/`, `Vault/` (VaultStore, VaultHeader), `Keychain/` |
-| Header modification / KDF downgrade / replay | Canonical header as AAD, bounds-before-allocate, `generation`, `header_sha256` (UX) | `Vault/` (VaultHeader), `Crypto/` |
-| SK theft from keychain / Time Machine | HPKE wrap to SE P-256 `[.privateKeyUsage]`, `ThisDeviceOnly`, non-synchronizable, no plaintext fallback, Recovery Kit re-entry | `SecureEnclave/`, `Keychain/` (SecretKeyStore), `Crypto/` (RecoveryKit) |
-| Touch ID misuse | Second SE key `[.privateKeyUsage, .biometryCurrentSet]`, VMK wrap with generation in AAD, `LAContext` settings, blob deleted on rotation/restore/disable | `SecureEnclave/`, `Keychain/` |
+| File/backup theft, offline MP guessing | Two-secret KEK `HKDF(MPK ‖ SKK)`, Argon2id floor + bounds, key-committing VMK wrap, uniform `authenticationFailed` | `Crypto/` (KeyHierarchy, Argon2id + KDFParameters, VaultHeader) |
+| Record tampering, swap, transplant, rollback | Per-record HKDF key, AEAD with `"record"` AAD incl. `revision`, `state_mac`, generation mirror | `Crypto/` (RecordCipher, VaultHeader), `Vault/` (VaultStore), `Keychain/` |
+| Header modification / KDF downgrade / replay | Canonical header as AAD, bounds-before-allocate, `generation`, `header_sha256` (UX) | `Crypto/` (VaultHeader, KeyHierarchy) |
+| SK theft from keychain / Time Machine | HPKE wrap to SE P-256 `[.privateKeyUsage]`, `ThisDeviceOnly`, non-synchronizable, no plaintext fallback, Recovery Kit re-entry | `Crypto/` (HPKEWrap, RecoveryKit), `SecureEnclave/`, `Keychain/` (SecretKeyStore) |
+| Touch ID misuse | Second SE key `[.privateKeyUsage, .biometryCurrentSet]`, VMK wrap with generation in AAD, `LAContext` settings, old blob replaced on rotation (§7.4) and deleted on restore / disable (§8.2) | `Crypto/` (HPKEWrap), `SecureEnclave/`, `Keychain/` |
 | Metadata leakage from the file | Only id/crypto_version/revision in plaintext; padding; `WITHOUT ROWID`; `secure_delete`; `journal_mode = DELETE`; `auto_vacuum = FULL`; `VACUUM`; `.noindex`; 0700/0600 | `Vault/` (VaultStore), `Crypto/` (envelope) |
 | Backup splicing / record rollback | Encrypted manifest over header hash + record set + `createdAt`; bounds before parse; atomic restore, no plaintext temp files | `Backup/` (BackupCodec, BackupManifest) |
 | Tier-2 exposure in memory / on screen | Inner AEAD box under `tier2Key`, opened only on gated Reveal, 30 s auto-hide, dropped on lock | `Crypto/`, `Vault/` (item cache), app-layer gates |
 | Logs, crash reports, core dumps | `SecureLog` (`StaticString` only), no value interpolation in assertions, `RLIMIT_CORE = 0`, `OSLogStore` sentinel test | `Logging/` (SecureLog), `Security/` |
-| Key material lingering in RAM / swap | `SecureBytes` (`mlock` + `memset_s` via `CSecureMemory`), `SymmetricKey`, Lock drops everything | `Security/` (SecureBytes), `Sources/CSecureMemory` |
+| Key material lingering in RAM / swap | `SecureBytes` (`mlock` + `memset_s` via `CSecureMemory`), `SymmetricKey`, Lock drops everything | `Crypto/` (SecureBytes), `Sources/CSecureMemory` |
 | Clipboard leakage | `.currentHostOnly`, `ConcealedType` + `TransientType`, change-count-guarded clear on timeout/lock/quit/sleep | `Security/` (pasteboard helper), app layer |
 | Plaintext on disk from the app layer / accidental serialisation | No window restoration or `@SceneStorage`, non-sensitive `UserDefaults` only, text-input learning + Writing Tools off, no Spotlight/QuickLook; `Secret<T>` redacted and `Codable` only inside the vault blob codec | `Vault/` (Secret, VaultItem), `Sources/PrivateVaultApp`, container-scan test |
 | Untrusted app bundle / network | Hardened runtime, App Sandbox with only `app-sandbox` + `files.user-selected.read-write` (no network entitlement) | `Scripts/build-app.sh`, `Packaging/` |

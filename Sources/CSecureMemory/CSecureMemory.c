@@ -22,3 +22,8 @@ bool pv_munlock(void *ptr, size_t len) {
     if (ptr == NULL || len == 0) return false;
     return munlock(ptr, len) == 0;
 }
+
+#include <sqlite3.h>
+int pv_sqlite_set_defensive(void *db) {
+    return sqlite3_db_config((sqlite3 *)db, SQLITE_DBCONFIG_DEFENSIVE, 1, (int *)0);
+}
