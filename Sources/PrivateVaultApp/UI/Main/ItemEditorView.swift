@@ -29,8 +29,8 @@ struct ItemEditorView: View {
     @State private var derivation = ""
     @State private var seedInput = ""
     @State private var privInput = ""
-    @State private var keepSeed = true
-    @State private var keepPriv = true
+    @State private var keepSeed = false
+    @State private var keepPriv = false
     @State private var removeSeed = false
     @State private var removePriv = false
     @State private var existingSeed: Tier2Value?
@@ -179,10 +179,7 @@ struct ItemEditorView: View {
         }
     }
     private func resolveTier2(existing: Tier2Value?, keep: Bool, remove: Bool, input: String) -> Tier2Value? {
-        if remove { return nil }
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if keep || (trimmed.isEmpty && existing != nil) { return existing }
-        return trimmed.isEmpty ? nil : .plaintext(Secret(trimmed))
+        Tier2Edit.resolve(existing: existing, keep: keep, remove: remove, input: input)
     }
     private func save() async {
         busy = true; error = nil

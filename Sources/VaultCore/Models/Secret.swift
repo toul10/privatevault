@@ -70,3 +70,17 @@ extension Tier2Value: Codable {
         }
     }
 }
+
+/// Pure decision logic for editing a tier-2 field (seed phrase / private key) in the UI; unit-tested.
+public enum Tier2Edit {
+    /// - existing: the stored (sealed) value, if any
+    /// - keep: the user left the stored value untouched
+    /// - remove: the user explicitly removed it
+    /// - input: new plaintext typed by the user
+    public static func resolve(existing: Tier2Value?, keep: Bool, remove: Bool, input: String) -> Tier2Value? {
+        if remove { return nil }
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existing, keep || trimmed.isEmpty { return existing }
+        return trimmed.isEmpty ? nil : .plaintext(Secret(trimmed))
+    }
+}

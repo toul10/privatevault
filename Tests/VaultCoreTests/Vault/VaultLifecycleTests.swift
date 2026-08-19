@@ -355,3 +355,20 @@ struct VaultLifecycleTests {
         #expect(elapsed < 10, "unlock of 2000 records took \(elapsed)s")
     }
 }
+
+@Suite("Tier-2 edit logic (wallet editor)")
+struct Tier2EditTests {
+    let sealed = Tier2Value.sealed(Data([1, 2, 3]))
+    @Test func new_wallet_typed_seed_is_kept_regardless_of_keep_flag() {
+        #expect(Tier2Edit.resolve(existing: nil, keep: true, remove: false, input: "zoo zoo FAKE") == .plaintext(Secret("zoo zoo FAKE")))
+        #expect(Tier2Edit.resolve(existing: nil, keep: false, remove: false, input: "  zoo zoo FAKE \n") == .plaintext(Secret("zoo zoo FAKE")))
+        #expect(Tier2Edit.resolve(existing: nil, keep: false, remove: false, input: "   ") == nil)
+    }
+    @Test func existing_value_kept_replaced_or_removed() {
+        #expect(Tier2Edit.resolve(existing: sealed, keep: true, remove: false, input: "") == sealed)
+        #expect(Tier2Edit.resolve(existing: sealed, keep: false, remove: false, input: "") == sealed)        // Replace pressed, nothing typed ⇒ keep
+        #expect(Tier2Edit.resolve(existing: sealed, keep: false, remove: false, input: "new FAKE") == .plaintext(Secret("new FAKE")))
+        #expect(Tier2Edit.resolve(existing: sealed, keep: false, remove: true, input: "") == nil)
+        #expect(Tier2Edit.resolve(existing: sealed, keep: true, remove: true, input: "x") == nil)           // remove wins
+    }
+}
