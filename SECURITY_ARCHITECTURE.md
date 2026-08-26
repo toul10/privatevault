@@ -187,10 +187,11 @@ separate verifier/hash of the password or key.
 | `revision` | monotonic per-record counter, authenticated inside the AAD and used by the state MAC (§5.3) and future sync conflict resolution | how many times a record was edited |
 | `blob` | ciphertext | size class only: every ordinary record pads to one 4 KiB bucket (§4.3); only unusually large notes stand out |
 
-**Everything else** — item type, title, website, username, password, notes, tags, favourite flag, creation and
-modification timestamps, last-used time, wallet chain, addresses, seed phrases, private keys — is inside the
-ciphertext. A database thief cannot tell a wallet from a login (all ordinary records have the same padded size),
-cannot count how many logins exist, and cannot learn when records were created.
+**Everything else** — item type, title, website, username, password, notes, tags, favourite flag, folder
+membership, creation and modification timestamps, last-used time, wallet chain, addresses, seed phrases, private
+keys, and the folders themselves (§6.1) — is inside the ciphertext. A database thief cannot tell a wallet from a
+login or a folder from an item (all ordinary records have the same padded size), cannot count how many logins or
+folders exist, and cannot learn when records were created.
 
 ### 4.2 Envelope format (crypto_version = 1)
 
@@ -209,9 +210,10 @@ state MAC.
 ### 4.3 Plaintext layout and padding
 
 `plaintext = [u32be length of JSON][JSON bytes][zero padding]` padded to the next multiple of 4 KiB (minimum
-4 KiB). The JSON is the `VaultItem` document (§6). A login, an API key, a note, a set of recovery codes and a wallet
-with a 24-word seed phrase and private key all fit in the first bucket, so the ciphertext size does not reveal the
-item kind or the seed length; only very large notes (> ~4 KB of text) occupy more buckets.
+4 KiB). The JSON is a `VaultItem` document (§6) or a `VaultFolder` document (§6.1). A login, an API key, a note, a
+set of recovery codes, a wallet with a 24-word seed phrase and private key, and a folder all fit in the first
+bucket, so the ciphertext size does not reveal the document kind or the seed length; only very large notes
+(> ~4 KB of text) occupy more buckets.
 
 ### 4.4 Tier-2 fields (seed phrase, private key)
 
@@ -289,10 +291,32 @@ and the first unlock cannot detect a rollback.
 
 ## 6. Item model
 
-`VaultItem { id, kind, title, favorite, tags[], createdAt, updatedAt, lastUsedAt, payload }` where payload is one of
-`login(website, username, password, notes)`, `apiCredential(service, apiKey, apiSecret, environment, notes)`,
+`VaultItem { id, kind, title, favorite, tags[], createdAt, updatedAt, lastUsedAt, folderID?, payload }` where payload
+is one of `login(website, username, password, notes)`, `apiCredential(service, apiKey, apiSecret, environment, notes)`,
 `wallet(name, blockchain, publicAddress, seedPhrase†, privateKey†, derivationPath, notes)`, `secureNote(body)`,
-`recoveryCodes(service, codes[], notes)`. † = tier-2 inner box.
+`recoveryCodes(service, codes[], notes)`. † = tier-2 inner box. `folderID` is optional and absent in records written
+before folders existed; such records decode unchanged (no migration, no format version bump).
+
+### 6.1 Folders
+
+`VaultFolder { doc: "folder", id, name, createdAt, updatedAt }` is a second document type stored in the **same**
+record envelope (§4) under its own random record id, with the same per-record key derivation, AAD binding, 4 KiB
+padding and state-MAC coverage as items. The only difference on the wire is the JSON `doc` discriminator; item
+documents carry no `doc` key (their v1 layout is untouched). The codec decodes the discriminator first and rejects
+unknown tags as corruption.
+
+Rules enforced by `VaultSession` (not by the UI):
+- Folders are flat (no nesting) in Version 1. Names are trimmed, 1–64 characters, no line breaks, and unique
+  case- and diacritic-insensitively.
+- An item references its folder only by id (`folderID`). A dangling reference — folder record deleted or
+  quarantined as unreadable — is presented as "no folder"; saving an item with an unknown `folderID` stores nil.
+  An item id can never collide with a folder id (the session refuses to save an item under a folder's id).
+- Deleting a folder never deletes items: the folder record is removed and every member item is re-sealed with
+  `folderID = nil` (or a chosen destination folder) in the **same** transaction, with one new state MAC.
+- Rename is one record write; moving N items is N re-seals in one transaction. Moves and renames do not touch
+  `updatedAt` of items and never open tier-2 boxes.
+- Key rotation re-encrypts folder records like items; backups carry them as opaque records; restore needs no
+  special handling. Folder names appear nowhere outside ciphertext — not in the window title, not in logs.
 
 `Secret<T>` wraps every sensitive value: its `description`, `debugDescription` and `Mirror` are redacted, and its
 `Codable` conformance **throws** unless the encoder/decoder was created by the record envelope codec

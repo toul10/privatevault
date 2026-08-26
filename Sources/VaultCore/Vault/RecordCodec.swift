@@ -30,14 +30,38 @@ public struct RecordCodec: Sendable {
         return EncryptedRecord(id: item.id, cryptoVersion: RecordCipher.currentCryptoVersion, revision: revision, blob: blob)
     }
 
-    /// Decrypts the outer envelope. Tier-2 fields stay sealed. The decoded item's id must match the record id.
-    public func open(_ record: EncryptedRecord) throws -> VaultItem {
+    /// Encrypts a folder document at the given revision (same envelope, same padding bucket as items).
+    public func seal(_ folder: VaultFolder, revision: UInt64) throws -> EncryptedRecord {
+        let json = try Self.makeEncoder().encode(folder)
+        let aad = RecordCipher.recordAAD(vaultID: keys.vaultID, recordID: folder.id, cryptoVersion: RecordCipher.currentCryptoVersion, revision: revision)
+        let blob = try RecordCipher.seal(payload: json, key: keys.recordKey(for: folder.id), aad: aad)
+        return EncryptedRecord(id: folder.id, cryptoVersion: RecordCipher.currentCryptoVersion, revision: revision, blob: blob)
+    }
+
+    /// Decrypts the outer envelope of any record (item or folder). Tier-2 fields stay sealed.
+    /// The decoded document's id must match the record id.
+    public func openDocument(_ record: EncryptedRecord) throws -> VaultDocument {
         guard record.cryptoVersion == RecordCipher.currentCryptoVersion else { throw VaultError.unsupportedFormat(UInt8(truncatingIfNeeded: record.cryptoVersion)) }
         let aad = RecordCipher.recordAAD(vaultID: keys.vaultID, recordID: record.id, cryptoVersion: record.cryptoVersion, revision: record.revision)
         let json = try RecordCipher.open(blob: record.blob, key: keys.recordKey(for: record.id), aad: aad)
-        let item: VaultItem
-        do { item = try Self.makeDecoder().decode(VaultItem.self, from: json) } catch { throw VaultError.corrupted("record json") }
-        guard item.id == record.id else { throw VaultError.authenticationFailed }
+        let doc: VaultDocument
+        do {
+            let decoder = Self.makeDecoder()
+            // Items carry no "doc" key (v1 layout, unchanged); folders are tagged. Unknown tags are corruption.
+            switch try decoder.decode(DocumentProbe.self, from: json).doc {
+            case nil: doc = .item(try decoder.decode(VaultItem.self, from: json))
+            case VaultFolder.documentTag?: doc = .folder(try decoder.decode(VaultFolder.self, from: json))
+            case .some: throw VaultError.corrupted("record doc tag")
+            }
+        } catch { throw VaultError.corrupted("record json") }
+        guard doc.id == record.id else { throw VaultError.authenticationFailed }
+        return doc
+    }
+    private struct DocumentProbe: Decodable { let doc: String? }
+
+    /// Decrypts a record that must be an item. A folder record here is a caller bug / corruption, not a valid item.
+    public func open(_ record: EncryptedRecord) throws -> VaultItem {
+        guard case .item(let item) = try openDocument(record) else { throw VaultError.corrupted("expected item record") }
         return item
     }
 

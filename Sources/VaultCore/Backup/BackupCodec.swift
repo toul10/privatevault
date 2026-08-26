@@ -114,7 +114,7 @@ public enum BackupCodec {
             throw VaultError.backupInvalid("header checksum")
         }
         let codec = RecordCodec(keys: keys)
-        for r in sorted { _ = try codec.open(r) } // authenticates every record (plaintext discarded)
+        for r in sorted { _ = try codec.openDocument(r) } // authenticates every record, item or folder (plaintext discarded)
         return VaultState.mac(key: keys.vaultStateKey, vaultID: parsed.header.vaultID, generation: parsed.header.generation,
                               entries: sorted.map { (id: $0.id, revision: $0.revision) })
     }

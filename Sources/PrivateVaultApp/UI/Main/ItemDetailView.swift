@@ -6,6 +6,7 @@ struct ItemDetailView: View {
     let item: VaultItem
     let onEdit: () -> Void
     @State private var confirmDelete = false
+    @State private var newFolder = false
 
     var body: some View {
         ScrollView {
@@ -19,7 +20,16 @@ struct ItemDetailView: View {
                     case .secureNote(let p): SecretRow(label: "Note", value: p.body.value, itemID: item.id, multiline: true, monospaced: false)
                     case .recoveryCodes(let p): recoverySection(p)
                     }
-                    if !item.tags.isEmpty { LabeledContent("Tags") { Text(item.tags.joined(separator: ", ")) } }
+                    Section {
+                        LabeledContent("Folder") {
+                            HStack {
+                                if let f = model.folder(of: item) { Label(f.name, systemImage: "folder") } else { Text("No Folder").foregroundStyle(.secondary) }
+                                Spacer()
+                                MoveToFolderMenu(items: [item]) { newFolder = true }.menuStyle(.borderlessButton).fixedSize()
+                            }
+                        }
+                        if !item.tags.isEmpty { LabeledContent("Tags") { Text(item.tags.joined(separator: ", ")) } }
+                    }
                     Section {
                         LabeledContent("Created") { Text(item.createdAt.formatted(date: .abbreviated, time: .shortened)) }
                         LabeledContent("Modified") { Text(item.updatedAt.formatted(date: .abbreviated, time: .shortened)) }
@@ -40,6 +50,12 @@ struct ItemDetailView: View {
         .confirmationDialog("Delete “\(item.title)”?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) { Task { try? await model.delete(item.id) } }
         } message: { Text("This cannot be undone.") }
+        .sheet(isPresented: $newFolder) {
+            FolderNameSheet(title: "New Folder for this item") { name in
+                let f = try await model.createFolder(name: name)
+                try await model.moveItems([item.id], toFolder: f.id)
+            }.environment(model)
+        }
     }
 
     private var header: some View {

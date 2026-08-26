@@ -146,14 +146,17 @@ public struct VaultItem: Sendable, Equatable, Identifiable, CustomStringConverti
     public var createdAt: Date
     public var updatedAt: Date
     public var lastUsedAt: Date?
+    /// Folder this item belongs to (`VaultFolder.id`), or nil for "no folder". Encrypted like every other field.
+    /// A dangling id (folder record deleted or unreadable) is treated as "no folder" by the session.
+    public var folderID: UUID?
     public var payload: ItemPayload
 
     public var kind: ItemKind { payload.kind }
 
     public init(id: UUID = SecureRandom.uuid(), title: String, favorite: Bool = false, tags: [String] = [],
-                createdAt: Date = Date(), updatedAt: Date = Date(), lastUsedAt: Date? = nil, payload: ItemPayload) {
+                createdAt: Date = Date(), updatedAt: Date = Date(), lastUsedAt: Date? = nil, folderID: UUID? = nil, payload: ItemPayload) {
         self.id = id; self.title = title; self.favorite = favorite; self.tags = tags
-        self.createdAt = createdAt; self.updatedAt = updatedAt; self.lastUsedAt = lastUsedAt; self.payload = payload
+        self.createdAt = createdAt; self.updatedAt = updatedAt; self.lastUsedAt = lastUsedAt; self.folderID = folderID; self.payload = payload
     }
     public var description: String { "VaultItem(<redacted>)" }
     public var debugDescription: String { description }
@@ -161,7 +164,7 @@ public struct VaultItem: Sendable, Equatable, Identifiable, CustomStringConverti
 }
 
 extension VaultItem: Codable {
-    enum Keys: String, CodingKey { case id, title, favorite, tags, createdAt, updatedAt, lastUsedAt, payload }
+    enum Keys: String, CodingKey { case id, title, favorite, tags, createdAt, updatedAt, lastUsedAt, folderID, payload }
     public init(from decoder: Decoder) throws {
         try CodecGuard.check(decoder.userInfo)
         let c = try decoder.container(keyedBy: Keys.self)
@@ -172,6 +175,7 @@ extension VaultItem: Codable {
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)   // absent in v1 records written before folders existed
         payload = try c.decode(ItemPayload.self, forKey: .payload)
     }
     public func encode(to encoder: Encoder) throws {
@@ -179,7 +183,8 @@ extension VaultItem: Codable {
         var c = encoder.container(keyedBy: Keys.self)
         try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encode(favorite, forKey: .favorite)
         try c.encode(tags, forKey: .tags); try c.encode(createdAt, forKey: .createdAt); try c.encode(updatedAt, forKey: .updatedAt)
-        try c.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt); try c.encode(payload, forKey: .payload)
+        try c.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt); try c.encodeIfPresent(folderID, forKey: .folderID)
+        try c.encode(payload, forKey: .payload)
     }
 }
 

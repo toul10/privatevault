@@ -17,6 +17,8 @@ struct GoldenFixtureTests {
         let s = try await m.unlock(password: GoldenFixture.password, recoveryKit: Self.kit)
         let items = try await s.allItems()
         #expect(items.map(\.title) == ["Golden login", "Golden wallet"])
+        let folders = try await s.allFolders()
+        #expect(items.allSatisfy { $0.folderID == nil } && folders.isEmpty)   // pre-folder records decode unchanged
         guard case .login(let p) = items[0].payload else { Issue.record("login"); return }
         #expect(p.password.value == "FAKE-golden-pass")
         #expect(try await s.revealTier2(itemID: items[1].id, field: .seedPhrase) == "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong")

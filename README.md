@@ -86,7 +86,7 @@ Sources/VaultCore/             all security logic, no UI
                                HPKE wrap, SecureBytes, Recovery Kit
   Keychain/  SecureEnclave/    Secret Key and Touch ID blobs (HPKE to Secure Enclave keys)
   Vault/  Database/            unlock, rotation, SQLite store, state MAC
-  Models/                      VaultItem, Secret<T> (redacted, codec-guarded)
+  Models/                      VaultItem, VaultFolder, Secret<T> (redacted, codec-guarded)
   Backup/  Logging/  Security/ .privatevault format, SecureLog, process hardening
 Sources/PrivateVaultApp/       App/ UI/ Authentication/ Services/ — thin SwiftUI app
 Tests/VaultCoreTests/          Swift Testing suite
@@ -110,6 +110,9 @@ docs, *.md                     see Document index
   A clipboard manager that ignores the markers can still capture them.
 - **Wallet secrets.** Seed phrases and private keys stay encrypted even while unlocked. *Reveal* asks for Touch ID
   or your login password, shows a warning, and hides again after 30 s.
+- **Folders.** Organise items in folders (e.g. *Wallets*, *Work keys*, *Exchanges*): sidebar → *Folders* → *New
+  Folder…*, then pick the folder in the item editor, right-click an item → *Move to Folder*, or drag items onto a
+  folder. Folder names are encrypted like everything else; deleting a folder never deletes its items.
 - **Recovery rules.** Forgot the Master Password: unrecoverable. Lost the Secret Key *and* the Recovery Kit:
   unrecoverable. New Mac or reset Secure Enclave: type the Recovery Kit once. See `RECOVERY.md`.
 

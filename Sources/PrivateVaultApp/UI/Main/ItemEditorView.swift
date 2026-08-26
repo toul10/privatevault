@@ -7,11 +7,14 @@ struct ItemEditorView: View {
     @Environment(\.dismiss) private var dismiss
     let existing: VaultItem?
     let kind: ItemKind
+    /// Folder preselected for a new item (the folder open in the sidebar).
+    var defaultFolderID: UUID? = nil
     let onSaved: (VaultItem) -> Void
 
     @State private var title = ""
     @State private var tags = ""
     @State private var favorite = false
+    @State private var folderID: UUID?
     // login
     @State private var website = ""
     @State private var username = ""
@@ -52,6 +55,7 @@ struct ItemEditorView: View {
             Form {
                 Section {
                     TextField("Title", text: $title)
+                    FolderPicker(folderID: $folderID)
                     TextField("Tags (comma separated)", text: $tags)
                     Toggle("Favorite", isOn: $favorite)
                 }
@@ -153,8 +157,9 @@ struct ItemEditorView: View {
     }
 
     private func load() {
-        guard let e = existing else { return }
+        guard let e = existing else { folderID = defaultFolderID.flatMap { model.folder($0)?.id }; return }
         title = e.title; tags = e.tags.joined(separator: ", "); favorite = e.favorite
+        folderID = model.folder(of: e)?.id
         switch e.payload {
         case .login(let p): website = p.website; username = p.username; password = p.password.value; notes = p.notes.value
         case .apiCredential(let p): service = p.service; apiKey = p.apiKey.value; apiSecret = p.apiSecret.value; environment = p.environment; notes = p.notes.value
@@ -186,7 +191,7 @@ struct ItemEditorView: View {
         let tagList = tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         var item = existing ?? VaultItem(title: "", payload: payload())
         item.title = title.trimmingCharacters(in: .whitespaces).isEmpty ? defaultTitle() : title.trimmingCharacters(in: .whitespaces)
-        item.tags = tagList; item.favorite = favorite; item.payload = payload()
+        item.tags = tagList; item.favorite = favorite; item.folderID = folderID; item.payload = payload()
         do {
             try await model.save(item)
             clearFields()

@@ -21,6 +21,7 @@ final class AppModel {
     private(set) var phase: Phase = .loading
     private(set) var session: VaultSession?
     private(set) var items: [VaultItem] = []
+    private(set) var folders: [VaultFolder] = []
     private(set) var integrityWarnings: [IntegrityWarning] = []
     private(set) var biometricAvailable = false
     private(set) var biometricEnabled = false
@@ -62,7 +63,7 @@ final class AppModel {
         }
         AppDelegate.terminateHandler = { [weak self] in
             self?.clipboard.clearIfStillOurs()
-            self?.items = []
+            self?.items = []; self?.folders = []
         }
         Task { await refreshPhase() }
     }
@@ -115,7 +116,7 @@ final class AppModel {
         autoLock.disarm()
         lastSecretAuth = nil
         clipboard.clearIfStillOurs(); clipboardClearAt = nil
-        items = []            // drop plaintext from the UI model before anything else
+        items = []; folders = []   // drop plaintext from the UI model before anything else
         integrityWarnings = []
         pendingRecoveryKit = nil
         await manager.lock()
@@ -137,8 +138,41 @@ final class AppModel {
 
     // MARK: items
     func reloadItems() async {
-        guard let session else { items = []; return }
+        guard let session else { items = []; folders = []; return }
         items = (try? await session.allItems()) ?? []
+        folders = (try? await session.allFolders()) ?? []
+    }
+    /// The folder an item is filed in (nil = no folder, or its folder no longer exists).
+    func folder(of item: VaultItem) -> VaultFolder? {
+        guard let id = item.folderID else { return nil }
+        return folders.first { $0.id == id }
+    }
+    func folder(_ id: UUID) -> VaultFolder? { folders.first { $0.id == id } }
+    func items(inFolder id: UUID?) -> [VaultItem] { items.filter { folder(of: $0)?.id == id } }
+
+    // MARK: folders
+    @discardableResult
+    func createFolder(name: String) async throws -> VaultFolder {
+        guard let session else { throw VaultError.vaultLocked }
+        let f = try await session.createFolder(name: name)
+        await reloadItems()
+        return f
+    }
+    func renameFolder(_ id: UUID, to name: String) async throws {
+        guard let session else { throw VaultError.vaultLocked }
+        try await session.renameFolder(id, to: name)
+        await reloadItems()
+    }
+    /// Items inside are kept and become unfiled (nil) or move to `destination`.
+    func deleteFolder(_ id: UUID, movingItemsTo destination: UUID? = nil) async throws {
+        guard let session else { throw VaultError.vaultLocked }
+        try await session.deleteFolder(id, movingItemsTo: destination)
+        await reloadItems()
+    }
+    func moveItems(_ ids: [UUID], toFolder destination: UUID?) async throws {
+        guard let session else { throw VaultError.vaultLocked }
+        try await session.moveItems(ids, toFolder: destination)
+        await reloadItems()
     }
     func save(_ item: VaultItem) async throws {
         guard let session else { throw VaultError.vaultLocked }
@@ -212,18 +246,18 @@ final class AppModel {
     }
     enum EnvImportMode { case oneSecureNote, oneItemPerKey }
     /// Imports a `.env`-style file chosen by the user. Plaintext exists only in memory until sealed into records.
-    func importDotEnv(text: String, fileName: String, mode: EnvImportMode) async throws -> Int {
+    func importDotEnv(text: String, fileName: String, mode: EnvImportMode, folderID: UUID? = nil) async throws -> Int {
         guard session != nil else { throw VaultError.vaultLocked }
         let base = (fileName as NSString).deletingPathExtension.isEmpty ? fileName : (fileName as NSString).deletingPathExtension
         switch mode {
         case .oneSecureNote:
-            try await save(VaultItem(title: base.isEmpty ? "Imported .env" : base, tags: ["env"], payload: .secureNote(SecureNotePayload(body: Secret(text)))))
+            try await save(VaultItem(title: base.isEmpty ? "Imported .env" : base, tags: ["env"], folderID: folderID, payload: .secureNote(SecureNotePayload(body: Secret(text)))))
             return 1
         case .oneItemPerKey:
             let entries = DotEnvParser.parse(text)
             guard !entries.isEmpty else { throw VaultError.invalidInput("No KEY=VALUE lines found in this file") }
             for e in entries {
-                try await save(VaultItem(title: e.key, tags: ["env", base], payload: .apiCredential(APICredentialPayload(service: e.key, apiKey: Secret(e.value), environment: base))))
+                try await save(VaultItem(title: e.key, tags: ["env", base], folderID: folderID, payload: .apiCredential(APICredentialPayload(service: e.key, apiKey: Secret(e.value), environment: base))))
             }
             return entries.count
         }

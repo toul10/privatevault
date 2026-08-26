@@ -161,7 +161,7 @@ Keychain unavailable · Touch ID cancellation / invalidation / header binding ·
 · sleep/session lock · backup · restore · incorrect backup password/key · corrupted/spliced backup · large vault
 (2000 records) · Unicode (NFC/NFD) · empty fields · very long values (1 M characters) · wallet seed phrase storage
 (tier-2 inner box) · private key masking (stays sealed in memory until reveal) · no secret values in logs /
-serialisation / on disk — all present in `Tests/VaultCoreTests` (85 tests). Real Secure Enclave + Keychain
+serialisation / on disk — all present in `Tests/VaultCoreTests` (95 tests as of 2026-08-26, incl. folders §8). Real Secure Enclave + Keychain
 integration tests are opt-in (`PV_DEVICE_TESTS=1`). Not automated: SwiftUI interaction flows (no UI automation
 without Xcode); these were reviewed by reading and by launching the app.
 
@@ -175,3 +175,22 @@ without Xcode); these were reviewed by reading and by launching the app.
 - Rollback detection depends on this Mac's Keychain mirror; a brand-new Mac has no baseline.
 - The legacy login keychain is used because an ad-hoc signed app cannot use the Data-Protection keychain;
   after every rebuild macOS shows one Keychain consent dialog.
+
+## 8. Post-V1 change review: folders (2026-08-26)
+
+Surface added: `VaultFolder` records (§6.1 of the architecture), `VaultItem.folderID`, session operations
+create / rename / delete / move, and the sidebar/editor UI. Reviewed against the same questions as the V1 audit:
+
+| Question | Result |
+|---|---|
+| Does anything about folders leave the ciphertext? | No. Folder records use the record envelope unchanged (per-record key, AAD, 4 KiB bucket); names are never logged, never put in the window title (`navigationTitle` deliberately not used), never in UserDefaults. Test: sentinel folder names absent from the vault directory and from backups; all 7 records (5 items + 2 folders) have identical blob sizes; `sqlite_master` contains no folder table/column. |
+| Format compatibility | Item JSON is byte-for-byte the v1 layout when `folderID` is nil (`encodeIfPresent`); folders are tagged `doc:"folder"`; unknown tags → `corrupted`. Golden v1 vault + backup still open (test asserts no folders / nil folderIDs). No schema or crypto version bump needed. |
+| Integrity / rollback | Folder records are ordinary entries of the state MAC; delete-folder + unfile-members is one transaction with one new MAC (test: re-unlock after delete shows no integrity warning). A folder record tampered on disk is quarantined like an item; member items degrade to "no folder" (test). |
+| Rotation / backup / restore | `reencryptAll` re-seals folders under the new keys (test: folder blob changes after rotation); backup verify authenticates folder records via `openDocument`; restore is unchanged (test round-trips folder membership and a tier-2 reveal). |
+| Injection of a folder id as an item id | Refused by the session (`invalidInput`); dangling `folderID` on save is normalised to nil (test). |
+| Drag & drop payload | The dragged string is only the item's random record id; drops are validated against the in-memory item list and folder existence. |
+| Tier-2 exposure | Moves/renames re-seal items with tier-2 boxes still sealed (test asserts `isSealed` after move + unlock). |
+
+No new findings. Not automated (as before): the SwiftUI flows — create folder, rename, delete with items inside,
+drag onto a folder, editor picker, .env import into a folder — reviewed by reading and by launching the app.
+

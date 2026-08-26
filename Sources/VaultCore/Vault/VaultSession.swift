@@ -11,6 +11,7 @@ public actor VaultSession {
     private(set) var header: VaultHeader
     private(set) var stored: StoredHeader
     private var items: [UUID: VaultItem] = [:]
+    private var folders: [UUID: VaultFolder] = [:]
     private var revisions: [UUID: UInt64] = [:]
     /// Records whose ciphertext did not authenticate at unlock (tampered/corrupted). Kept in the store, hidden from the UI.
     public private(set) var unreadableRecordIDs: [UUID] = []
@@ -30,16 +31,20 @@ public actor VaultSession {
     private func loadAndVerify() async throws {
         guard let keys, let codec else { throw VaultError.vaultLocked }
         let records = try await store.allRecords()
-        var loaded: [UUID: VaultItem] = [:], revs: [UUID: UInt64] = [:], bad: [UUID] = []
+        var loaded: [UUID: VaultItem] = [:], loadedFolders: [UUID: VaultFolder] = [:], revs: [UUID: UInt64] = [:], bad: [UUID] = []
         for r in records {
             revs[r.id] = r.revision
-            do { let item = try codec.open(r); loaded[item.id] = item }
-            catch { bad.append(r.id) }   // tampered / corrupted / unknown version: quarantine, do not brick the vault
+            do {
+                switch try codec.openDocument(r) {
+                case .item(let item): loaded[item.id] = item
+                case .folder(let folder): loadedFolders[folder.id] = folder
+                }
+            } catch { bad.append(r.id) }   // tampered / corrupted / unknown version: quarantine, do not brick the vault
         }
         // Every record failing means the VMK is wrong for this data (stale blob) or the whole file was tampered —
         // not a partial-recovery situation.
         if !records.isEmpty && bad.count == records.count { throw VaultError.corrupted("all records unreadable") }
-        items = loaded; revisions = revs; unreadableRecordIDs = bad
+        items = loaded; folders = loadedFolders; revisions = revs; unreadableRecordIDs = bad
         if !bad.isEmpty { addIntegrityWarning(.unreadableRecords); SecureLog.error(.vault, "unreadable records at unlock", .count(bad.count)) }
         if !VaultState.verify(stored.stateMAC, key: keys.vaultStateKey, vaultID: vaultID, generation: header.generation, entries: entries()) {
             addIntegrityWarning(.recordStateMismatch)
@@ -70,7 +75,101 @@ public actor VaultSession {
         }
     }
     public func item(_ id: UUID) throws -> VaultItem? { _ = try requireKeys(); return items[id] }
+    /// Number of items (folders are not counted).
     public func count() throws -> Int { _ = try requireKeys(); return items.count }
+
+    // MARK: folders
+    public func allFolders() throws -> [VaultFolder] {
+        _ = try requireKeys()
+        return folders.values.sorted { a, b in
+            let c = a.name.localizedCaseInsensitiveCompare(b.name)
+            return c == .orderedAscending || (c == .orderedSame && a.id.uuidString < b.id.uuidString)
+        }
+    }
+    public func folder(_ id: UUID) throws -> VaultFolder? { _ = try requireKeys(); return folders[id] }
+    /// The folder an item is in, or nil when unfiled or when its folder record no longer exists.
+    public func folder(of item: VaultItem) throws -> VaultFolder? {
+        _ = try requireKeys()
+        guard let fid = item.folderID else { return nil }
+        return folders[fid]
+    }
+    public func items(inFolder id: UUID?) throws -> [VaultItem] {
+        try allItems().filter { try folder(of: $0)?.id == id }
+    }
+    /// Creates a folder. Names are trimmed, bounded and unique (case-insensitive).
+    @discardableResult
+    public func createFolder(name rawName: String) async throws -> VaultFolder {
+        _ = try requireKeys()
+        let name = try VaultFolder.normalizedName(rawName)
+        try ensureUniqueFolderName(name, excluding: nil)
+        let folder = VaultFolder(name: name)
+        try await commit(items: [], folders: [folder], deletes: [])
+        SecureLog.log(.vault, "folder created")
+        return folder
+    }
+    public func renameFolder(_ id: UUID, to rawName: String) async throws {
+        _ = try requireKeys()
+        guard var folder = folders[id] else { throw VaultError.invalidInput("This folder no longer exists.") }
+        let name = try VaultFolder.normalizedName(rawName)
+        try ensureUniqueFolderName(name, excluding: id)
+        guard folder.name != name else { return }
+        folder.name = name; folder.updatedAt = Date()
+        try await commit(items: [], folders: [folder], deletes: [])
+        SecureLog.log(.vault, "folder renamed")
+    }
+    /// Deletes a folder. Its items are kept: they move to `destination` (nil = no folder) in the same transaction.
+    public func deleteFolder(_ id: UUID, movingItemsTo destination: UUID? = nil) async throws {
+        _ = try requireKeys()
+        guard folders[id] != nil else { return }
+        if let destination { guard destination != id, folders[destination] != nil else { throw VaultError.invalidInput("The destination folder no longer exists.") } }
+        var moved: [VaultItem] = []
+        for var item in items.values where item.folderID == id { item.folderID = destination; moved.append(item) }
+        try await commit(items: moved, folders: [], deletes: [id])
+        SecureLog.log(.vault, "folder deleted", .count(moved.count))
+    }
+    /// Moves items into a folder (nil = no folder). Unknown item ids are ignored; an unknown folder is an error.
+    public func moveItems(_ ids: [UUID], toFolder destination: UUID?) async throws {
+        _ = try requireKeys()
+        if let destination { guard folders[destination] != nil else { throw VaultError.invalidInput("This folder no longer exists.") } }
+        var changed: [VaultItem] = []
+        for id in Set(ids) {
+            guard var item = items[id], item.folderID != destination else { continue }
+            item.folderID = destination; changed.append(item)
+        }
+        guard !changed.isEmpty else { return }
+        try await commit(items: changed, folders: [], deletes: [])
+        SecureLog.log(.vault, "items moved", .count(changed.count))
+    }
+    private func ensureUniqueFolderName(_ name: String, excluding: UUID?) throws {
+        if folders.values.contains(where: { $0.id != excluding && VaultFolder.sameName($0.name, name) }) {
+            throw VaultError.invalidInput("A folder named “\(name)” already exists.")
+        }
+    }
+    /// One transaction: seal every given item/folder at its next revision, apply deletes, write the new state MAC.
+    private func commit(items changedItems: [VaultItem], folders changedFolders: [VaultFolder], deletes: [UUID]) async throws {
+        let (keys, codec) = try requireKeys()
+        var newRevs = revisions
+        var upserts: [EncryptedRecord] = []
+        var storedItems: [VaultItem] = []
+        for item in changedItems {
+            let rev = (newRevs[item.id] ?? 0) + 1
+            let record = try codec.seal(item, revision: rev)
+            storedItems.append(try codec.open(record))   // in-memory copy keeps tier-2 sealed
+            upserts.append(record); newRevs[item.id] = rev
+        }
+        for folder in changedFolders {
+            let rev = (newRevs[folder.id] ?? 0) + 1
+            upserts.append(try codec.seal(folder, revision: rev)); newRevs[folder.id] = rev
+        }
+        for id in deletes { newRevs[id] = nil }
+        let mac = VaultState.mac(key: keys.vaultStateKey, vaultID: vaultID, generation: header.generation, entries: newRevs.map { (id: $0.key, revision: $0.value) })
+        try await store.commit(upserts: upserts, deletes: deletes, stateMAC: mac)
+        for item in storedItems { items[item.id] = item }
+        for folder in changedFolders { folders[folder.id] = folder }
+        for id in deletes { items[id] = nil; folders[id] = nil }
+        revisions = newRevs; self.stored.stateMAC = mac
+        onStateChanged?(mac)
+    }
 
     /// Local, in-memory search over decrypted non-tier-2 fields.
     public func search(_ query: String) throws -> [VaultItem] {
@@ -79,6 +178,7 @@ public actor VaultSession {
         guard !q.isEmpty else { return all }
         return all.filter { item in
             var hay: [String] = [item.title] + item.tags
+            if let fid = item.folderID, let f = folders[fid] { hay.append(f.name) }
             switch item.payload {
             case .login(let p): hay += [p.website, p.username]
             case .apiCredential(let p): hay += [p.service, p.environment]
@@ -97,6 +197,8 @@ public actor VaultSession {
         let (keys, codec) = try requireKeys()
         var item = input
         if touchUpdatedAt { item.updatedAt = Date() }
+        if let fid = item.folderID, folders[fid] == nil { item.folderID = nil }   // never persist a dangling folder reference
+        guard folders[item.id] == nil else { throw VaultError.invalidInput("This id belongs to a folder.") }
         let revision = (revisions[item.id] ?? 0) + 1
         let record = try codec.seal(item, revision: revision)
         // the in-memory copy keeps tier-2 sealed (never plaintext)
@@ -175,6 +277,10 @@ public actor VaultSession {
             let rev = (revisions[id] ?? 0) + 1
             out.append(try newCodec.seal(resealed, revision: rev)); newRevs[id] = rev
         }
+        for (id, folder) in folders {
+            let rev = (revisions[id] ?? 0) + 1
+            out.append(try newCodec.seal(folder, revision: rev)); newRevs[id] = rev
+        }
         let mac = VaultState.mac(key: newKeys.vaultStateKey, vaultID: vaultID, generation: generation, entries: newRevs.map { (id: $0.key, revision: $0.value) })
         return (out, mac, newRevs)
     }
@@ -186,9 +292,15 @@ public actor VaultSession {
     func reloadFromStore() async throws {
         guard let codec else { throw VaultError.vaultLocked }
         let records = try await store.allRecords()
-        var loaded: [UUID: VaultItem] = [:], revs: [UUID: UInt64] = [:]
-        for r in records { let item = try codec.open(r); loaded[item.id] = item; revs[r.id] = r.revision }
-        items = loaded; revisions = revs; unreadableRecordIDs = []
+        var loaded: [UUID: VaultItem] = [:], loadedFolders: [UUID: VaultFolder] = [:], revs: [UUID: UInt64] = [:]
+        for r in records {
+            switch try codec.openDocument(r) {
+            case .item(let item): loaded[item.id] = item
+            case .folder(let folder): loadedFolders[folder.id] = folder
+            }
+            revs[r.id] = r.revision
+        }
+        items = loaded; folders = loadedFolders; revisions = revs; unreadableRecordIDs = []
         integrityWarnings.removeAll { $0 == .unreadableRecords }
     }
 
@@ -196,7 +308,7 @@ public actor VaultSession {
     public func lock() {
         keys?.wipe()
         keys = nil; codec = nil
-        items.removeAll(); revisions.removeAll()
+        items.removeAll(); folders.removeAll(); revisions.removeAll()
         SecureLog.log(.vault, "vault locked")
     }
 }
