@@ -35,7 +35,7 @@ competing commercial product. To build it yourself:
 ```
 git config core.hooksPath .githooks   # pre-commit + pre-push secret scans
 Scripts/run-tests.sh                  # the full test suite; Command Line Tools are enough
-Scripts/build-app.sh                  # "PrivateVault Dev": its own sandbox container, never your real vault
+Scripts/build-app.sh                  # "PrivateVault Dev": own container + Keychain items, never your real vault
 ```
 
 House rules (they apply to the maintainer too):

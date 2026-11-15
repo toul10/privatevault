@@ -12,7 +12,20 @@ public protocol SecretStore: Sendable {
 /// macOS Keychain implementation. Tries the Data-Protection keychain first; an ad-hoc-signed build gets
 /// `errSecMissingEntitlement` and falls back to the classic login keychain. Items are never synchronised.
 public final class KeychainSecretStore: SecretStore, @unchecked Sendable {
-    public static let service = "com.kostastoulis.privatevault"
+    /// Keychain service of the production app (`SECURITY_ARCHITECTURE.md` §8.1, item 3).
+    public static let productionService = "com.kostastoulis.privatevault"
+    /// Service used by this process: see `serviceName(forBundleIdentifier:)`.
+    public static let service = serviceName(forBundleIdentifier: Bundle.main.bundleIdentifier)
+
+    /// A development build (bundle id `com.kostastoulis.privatevault.<suffix>`, e.g. `.dev`) gets its own Keychain
+    /// service. Restoring a real backup keeps the vault UUID, so with a shared service a development build could
+    /// overwrite or delete an installed app's `sk:`/`bio:` items; with its own service it never can. The production
+    /// app, command-line tools and test runners use `productionService`.
+    public static func serviceName(forBundleIdentifier bundleID: String?) -> String {
+        if let bundleID, bundleID.hasPrefix(productionService + ".") { return bundleID }
+        return productionService
+    }
+
     private let service: String
     private let lock = NSLock()
     private var useDataProtection: Bool? // resolved on first use

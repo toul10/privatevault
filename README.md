@@ -51,12 +51,14 @@ The code is shared; every installation's data is private and separate.
   `~/Library/Containers/com.kostastoulis.privatevault/…/Vault.noindex/vault.sqlite`, and the Secret Key in your
   Keychain. Nothing in this repository reads, writes or ships that data.
 - **Development builds cannot touch it.** `Scripts/build-app.sh` builds **PrivateVault Dev**
-  (`com.kostastoulis.privatevault.dev`): a separate app identity with its own empty sandbox container, so a test
-  build can never open, migrate or damage a real vault on the same Mac. Only `--production` builds use the real
-  identity, and the script never replaces an installed app.
-- **Nothing private can be committed or pushed.** `.gitignore`, the pre-commit hook and the pre-push hook block
-  vault files, backups, Recovery Kits, keys, `.env` files and non-noreply e-mail addresses — in every commit that
-  would leave the Mac, not only the last one.
+  (`com.kostastoulis.privatevault.dev`): a separate app identity with its own empty sandbox container and its own
+  Keychain items, so a test build can never open, migrate or damage the installed app's vault, nor overwrite or
+  delete its Secret Key — even if you restore a copy of a real backup into it. Only `--production` builds use the
+  real identity, and the script never replaces an installed app.
+- **A safety net against publishing private data.** `.gitignore`, the pre-commit hook and the pre-push hook block
+  vault files and backups (also when renamed), Recovery Kits, keys and signing material, `.env` files, screenshots
+  and non-noreply e-mail addresses — in every file, commit message and tag that would leave the Mac, not only the
+  last commit. It is a net, not a guarantee: never copy personal files into the repository folder.
 
 ## Requirements
 
@@ -104,7 +106,9 @@ Scripts/run-tests.sh -c release --filter 'Argon2|AEAD|HKDF|HPKE'   # known-answe
 The script builds only the test target and the core — never the app — so it works wherever the core compiles.
 Tests pin byte-level formats with known-answer vectors; OS boundaries (Keychain, Secure Enclave, Touch ID,
 clipboard) are faked by default. `Scripts/secret-scan.sh --all` and `Scripts/audit-network.sh --strict` are the
-other two gates; CI runs all three on every push.
+other two gates. CI runs all three, plus an app build, on every push and pull request once the repository is
+public (its jobs are skipped while it is private); the scan of every commit's history runs on pushes, not on pull
+requests.
 
 ## Project layout
 

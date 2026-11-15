@@ -98,7 +98,7 @@ Secret Key through HKDF (not XOR) so no linear relation between the two inputs e
 ### 2.3 Argon2id parameters
 
 - Version 0x13, `m` (KiB), `t` (passes), `p` (lanes), 16-byte CSPRNG salt, 32-byte output.
-- **Production defaults** were chosen with `Scripts/benchmark-kdf.sh` on the owner's MacBook Air M1 (8 GB), release
+- **Production defaults** were chosen with `Scripts/benchmark-kdf.sh` on a MacBook Air M1 (8 GB), release
   build, 2026-08-19: `m = 256 MiB, t = 6, p = 4` ≈ 0.65 s per unlock (256 MiB/t=3 measured 0.33 s; 512 MiB/t=3
   0.73 s but was rejected because this Mac has 8 GB RAM and heavy swap use). They live in `KDFParameters.current`.
   Floor for vaults created by this app: **m ≥ 64 MiB, t ≥ 3**. A test asserts `KDFParameters.current ≥ floor`.
@@ -378,7 +378,9 @@ item cache and tier-2 plaintext, clear the clipboard if it still holds our last 
 2. If no Secure Enclave (VM, old Intel Mac): SK is stored raw in the Keychain (still encrypted by macOS under
    the login password) and the user is shown a one-time warning that the Secret Key's protection then relies on
    the login password. `THREAT_MODEL.md` §scenario 3 describes the difference.
-3. Keychain usage: generic-password items, service `com.kostastoulis.privatevault`, account = vaultID,
+3. Keychain usage: generic-password items, service `com.kostastoulis.privatevault` (a development build with
+   bundle id `com.kostastoulis.privatevault.<suffix>` uses that bundle id as its own service, so it can never
+   overwrite or delete an installed app's items — a restored backup keeps the vault UUID), account = vaultID,
    `kSecAttrSynchronizable = false`. The app first tries the Data-Protection keychain
    (`kSecUseDataProtectionKeychain = true`); with an ad-hoc signed build macOS returns `errSecMissingEntitlement`
    and the app falls back to the classic login keychain. After the app binary changes (a rebuild), macOS shows

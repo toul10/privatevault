@@ -31,9 +31,11 @@ First public source release.
 ### Project
 - Swift Testing suite with known-answer vectors and a frozen golden v1 vault and backup fixture.
 - `Scripts/run-tests.sh` builds only the core and its tests, so the suite runs with the Command Line Tools.
-- Development builds use their own identity ("PrivateVault Dev") and can never open an installed vault.
-- Pre-commit and pre-push secret scans (vault files, keys, Recovery Kits, private e-mail addresses in any pushed
-  commit); CI on GitHub Actions.
+- Development builds use their own identity ("PrivateVault Dev"), sandbox container and Keychain items, so they
+  can never open an installed vault or overwrite its Secret Key.
+- Pre-commit and pre-push secret scans: vault files and backups (also renamed), keys and signing material,
+  Recovery Kits in any form, `.env` files, screenshots and private e-mail addresses — in every pushed file, commit
+  message and tag; CI on GitHub Actions.
 - Licensed under FSL-1.1-ALv2.
 
 [1.0.0]: https://github.com/toul10/privatevault/releases/tag/v1.0.0
