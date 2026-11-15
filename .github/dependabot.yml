@@ -1,0 +1,9 @@
+# Proposes updates for the pinned GitHub Actions (the only CI dependency). Review the upstream diff before merging.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci

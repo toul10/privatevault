@@ -1,0 +1,7 @@
+# Vendored third-party C: keeps GitHub's language statistics and review diffs honest.
+Sources/CArgon2/** linguist-vendored
+
+# Binary fixtures and assets: never diffed, never line-ending converted.
+*.sqlite        binary
+*.privatevault  binary
+*.icns          binary

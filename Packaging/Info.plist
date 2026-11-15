@@ -16,7 +16,7 @@
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSMultipleInstancesProhibited</key><true/>
 	<key>NSHighResolutionCapable</key><true/>
-	<key>NSHumanReadableCopyright</key><string>Private use.</string>
+	<key>NSHumanReadableCopyright</key><string>© 2026 Konstantinos Toulis. Source available under FSL-1.1-ALv2.</string>
 	<key>NSPrincipalClass</key><string>NSApplication</string>
 	<key>NSSupportsAutomaticTermination</key><false/>
 	<key>NSSupportsSuddenTermination</key><false/>

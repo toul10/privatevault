@@ -30,6 +30,16 @@ Package.resolved.bak
 *Recovery Kit*.txt
 *recovery-kit*.txt
 Packaging/*.cer
+# archives, git bundles and documents never belong here (backups, exports, personal notes)
+*.bundle
+*.zip
+*.dmg
+*.rtf
+*.rtfd/
+# .env files hold real API keys: import them into the app, never commit them
+.env
+*.env
+.env.*
 
 # macOS / editor noise
 .DS_Store

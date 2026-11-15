@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problem?** Do not use this form — report it privately: Security tab → *Report a vulnerability*.
+
+        **Never paste real secrets.** This issue is public. No real passwords, seed phrases, private keys, API keys,
+        vault files, backups or Recovery Kits — reproduce with a new test vault and obviously fake data.
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Safety check
+      options:
+        - label: This report contains no real password, seed phrase, private key, API key, vault file, backup or Recovery Kit.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: PrivateVault version
+      description: PrivateVault → About PrivateVault
+      placeholder: "1.0.0 (1)"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "macOS 26.1, MacBook Air M1"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true

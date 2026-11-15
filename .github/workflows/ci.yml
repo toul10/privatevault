@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only token; the workflow holds no secrets and never signs, notarizes or publishes anything.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core tests, secret scan, network audit
+    # GitHub-hosted macOS minutes are free only for public repositories: skip while the repository is private.
+    if: ${{ !github.event.repository.private }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0              # full history, so every commit can be scanned
+          persist-credentials: false
+      - name: Toolchain
+        run: xcodebuild -version && swift --version
+      - name: Secret scan — tracked files
+        run: Scripts/secret-scan.sh --all
+      - name: Secret scan — every commit (files and e-mail addresses)
+        if: ${{ github.event_name != 'pull_request' }}
+        run: Scripts/secret-scan.sh --commits HEAD
+      - name: Network audit
+        run: Scripts/audit-network.sh --strict
+      - name: Test suite
+        run: Scripts/run-tests.sh
+      - name: Known-answer tests in a release build
+        run: Scripts/run-tests.sh -c release --filter 'Argon2|AEAD|HKDF|HPKE'
+
+  app:
+    name: App bundle (SwiftUI, dev identity)
+    if: ${{ !github.event.repository.private }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build, sign ad-hoc and verify "PrivateVault Dev.app"
+        run: Scripts/build-app.sh

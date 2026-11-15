@@ -21,6 +21,7 @@ update or telemetry SDKs, and the app has no network entitlement, so nothing cou
 | Security.framework, LocalAuthentication, AppKit, SwiftUI, Foundation, OSLog | Platform frameworks | Keychain, access control, CSPRNG, Touch ID, UI, pasteboard, logging | Apple |
 | `Sources/CSecureMemory` | Our own C shim | `memset_s`, `timingsafe_bcmp`, `mlock`/`munlock` | Our code (24 lines), wraps Darwin libc |
 | Swift Testing | Toolchain framework | Tests only | Apple toolchain; never linked into the app |
+| `actions/checkout` | GitHub Action (CI only) | Checking out the repository in CI (§10) | Pinned commit SHA, read-only token; never part of the app |
 
 ## 2. CArgon2 — vendored PHC reference Argon2
 
@@ -134,3 +135,14 @@ machine). Linked only into `VaultCoreTests` via `Scripts/run-tests.sh`; never pa
 - Current macOS security release notes reviewed for CryptoKit/corecrypto, SQLite and Security.framework fixes — we
   inherit them by updating the OS, not by re-vendoring.
 - All Argon2, HKDF, AES-GCM and HPKE known-answer tests green in a **release** build.
+
+## 10. Build infrastructure (GitHub Actions)
+
+CI never ships to users, but it builds and tests the code, so it is pinned like a dependency:
+
+- The only third-party action is `actions/checkout`, pinned to a full commit SHA (`3d3c42e5…` = v7.0.1) with
+  `persist-credentials: false`; the workflow token is read-only (`permissions: contents: read`).
+- CI holds no secrets: it never signs with a Developer ID, never notarizes and never publishes a release. Release
+  signing happens only on the maintainer's Mac (`RELEASING.md`).
+- Dependabot proposes action updates as pull requests; review the upstream diff before accepting a new SHA.
+- Runner: GitHub-hosted `macos-26` with its default Xcode. Jobs are skipped while the repository is private.

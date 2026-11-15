@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PrivateVault stays **local-only by design**: no network access, no accounts, no telemetry. Ideas that need a
+        server are tracked separately in `FUTURE_SYNC_ARCHITECTURE.md`. Never paste real secrets.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like PrivateVault to do?
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security considerations
+      description: Could this expose a secret, weaken a protection or need the network? Say so if unsure.

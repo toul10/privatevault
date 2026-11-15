@@ -1,8 +1,15 @@
 # PrivateVault
 
+[![CI](https://github.com/toul10/privatevault/actions/workflows/ci.yml/badge.svg)](https://github.com/toul10/privatevault/actions/workflows/ci.yml)
+[![License: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue)](LICENSE.md)
+
 A 100% local, offline, single-user, zero-knowledge secrets manager for macOS: logins, API credentials,
 secure notes, recovery codes, and crypto-wallet seed phrases / private keys in one encrypted vault file on
 this Mac — and nowhere else.
+
+> **Status: version 1.0.** The source is public so anyone can review the security design and the code.
+> Signed and notarized downloads are not published yet (`RELEASING.md`). Found a security problem? Report it
+> privately — see `SECURITY.md`.
 
 ## What PrivateVault is — and is not
 
@@ -35,45 +42,69 @@ backups.
 Details: `SECURITY_ARCHITECTURE.md` (normative spec), `THREAT_MODEL.md` (what is and is not defended),
 `RECOVERY.md` (which loss scenarios are recoverable).
 
-## After cloning (one-time)
+## Your vault vs. this repository
 
-```
-git config core.hooksPath .githooks     # enables the pre-commit secret scan in this clone
-```
+The code is shared; every installation's data is private and separate.
+
+- **Your vault is never in the repository.** The installed app (e.g. `/Applications/PrivateVault.app`) keeps the
+  vault in its own sandbox container,
+  `~/Library/Containers/com.kostastoulis.privatevault/…/Vault.noindex/vault.sqlite`, and the Secret Key in your
+  Keychain. Nothing in this repository reads, writes or ships that data.
+- **Development builds cannot touch it.** `Scripts/build-app.sh` builds **PrivateVault Dev**
+  (`com.kostastoulis.privatevault.dev`): a separate app identity with its own empty sandbox container, so a test
+  build can never open, migrate or damage a real vault on the same Mac. Only `--production` builds use the real
+  identity, and the script never replaces an installed app.
+- **Nothing private can be committed or pushed.** `.gitignore`, the pre-commit hook and the pre-push hook block
+  vault files, backups, Recovery Kits, keys, `.env` files and non-noreply e-mail addresses — in every commit that
+  would leave the Mac, not only the last one.
 
 ## Requirements
 
 - macOS 14 or newer.
 - Apple Silicon, or an Intel Mac with a Secure Enclave (T2), recommended. Without a Secure Enclave the Secret Key
   is protected only by your login password in the Keychain; the app warns you once.
-- To build: only the Command Line Tools (`xcode-select --install`). No Xcode, no Apple Developer account.
+- Core library and tests: the Command Line Tools are enough (`xcode-select --install`).
+- The app (SwiftUI): a current Xcode — CI uses Xcode 26.6. The Command Line Tools for Swift 6.4 ship without the
+  SwiftUI macro plugin, so they can no longer compile the app; the core and its tests are unaffected.
+
+## After cloning (one-time)
+
+```
+git config core.hooksPath .githooks     # pre-commit + pre-push secret scans in this clone
+```
 
 ## Build and run
 
 ```
-Scripts/build-app.sh        # → dist/PrivateVault.app
-open dist/PrivateVault.app
+Scripts/build-app.sh                # → dist/PrivateVault Dev.app  (development identity, its own empty vault)
+open "dist/PrivateVault Dev.app"
+
+Scripts/build-app.sh --production   # → dist/PrivateVault.app      (real identity — releases only, RELEASING.md)
+Scripts/build-app.sh --debug        # debug configuration + debug entitlements, either identity; never distribute
 ```
 
 First-launch notes:
-- The app is **ad-hoc signed** (no certificate), sandboxed, with the hardened runtime. A locally built app carries no
-  quarantine attribute, so Gatekeeper does not block it. Only run builds you made yourself.
-- After a rebuild macOS sees a "new" app, so the first unlock shows the standard macOS Keychain dialog
-  ("PrivateVault wants to use your confidential information…"): click **Always Allow** (your login password may be
-  asked). If you deny it or the item is gone, PrivateVault asks for your **Recovery Kit** once and stores the Secret
-  Key again (`SECURITY_ARCHITECTURE.md` §8.1). Keep the kit at hand when you rebuild.
-- Nothing is installed system-wide; the vault is
-  `~/Library/Containers/com.kostastoulis.privatevault/…/Vault.noindex/vault.sqlite`.
+- Builds are **ad-hoc signed** (no certificate), sandboxed, with the hardened runtime. A locally built app carries
+  no quarantine attribute, so Gatekeeper does not block it. Only run builds you made yourself. Never give an ad-hoc
+  build to someone else — releases are Developer-ID-signed and notarized (`RELEASING.md`).
+- A Dev build starts with onboarding: create a throwaway test vault with obviously fake data.
+- A production build is a "new" app to macOS after every rebuild, so its first unlock shows the standard Keychain
+  dialog ("PrivateVault wants to use your confidential information…"): click **Always Allow** (your login password
+  may be asked). If you deny it or the item is gone, PrivateVault asks for your **Recovery Kit** once and stores the
+  Secret Key again (`SECURITY_ARCHITECTURE.md` §8.1). Keep the kit at hand when you rebuild.
 
 ## Run tests
 
 ```
-Scripts/run-tests.sh                 # Swift Testing under Command Line Tools
-Scripts/run-tests.sh --filter KDF    # a subset
+Scripts/run-tests.sh                                  # full Swift Testing suite (Command Line Tools or Xcode)
+Scripts/run-tests.sh --filter KDF                     # a subset
+Scripts/run-tests.sh -c release --filter 'Argon2|AEAD|HKDF|HPKE'   # known-answer tests in a release build
 ```
 
+The script builds only the test target and the core — never the app — so it works wherever the core compiles.
 Tests pin byte-level formats with known-answer vectors; OS boundaries (Keychain, Secure Enclave, Touch ID,
-clipboard) are faked by default.
+clipboard) are faked by default. `Scripts/secret-scan.sh --all` and `Scripts/audit-network.sh --strict` are the
+other two gates; CI runs all three on every push.
 
 ## Project layout
 
@@ -90,9 +121,11 @@ Sources/VaultCore/             all security logic, no UI
   Backup/  Logging/  Security/ .privatevault format, SecureLog, process hardening
 Sources/PrivateVaultApp/       App/ UI/ Authentication/ Services/ — thin SwiftUI app
 Tests/VaultCoreTests/          Swift Testing suite
-Scripts/                       build-app.sh, run-tests.sh, benchmark-kdf.sh, secret-scan.sh
-Packaging/                     Info.plist, entitlements
-docs, *.md                     see Document index
+Scripts/                       build-app.sh, run-tests.sh, secret-scan.sh, audit-network.sh, verify-bundle.sh,
+                               benchmark-kdf.sh
+Packaging/                     Info.plist, entitlements, icon
+.githooks/                     pre-commit and pre-push secret scans
+.github/                       CI workflow, issue forms, Dependabot
 ```
 
 ## Daily use
@@ -123,11 +156,30 @@ docs, *.md                     see Document index
 | `SECURITY_ARCHITECTURE.md` | Normative crypto and storage specification |
 | `THREAT_MODEL.md` | Attacker scenarios; what is defended and what is not |
 | `RECOVERY.md` | Loss scenarios and what is recoverable |
-| `FUTURE_SYNC_ARCHITECTURE.md` | Plan for a later zero-knowledge sync (not built) |
-| `DEPENDENCY_SECURITY.md` | Vendored code, pinning, supply chain |
 | `SECURITY_AUDIT.md` | Self-audit checklist and findings |
+| `DEPENDENCY_SECURITY.md` | Vendored code, pinning, supply chain, CI |
+| `FUTURE_SYNC_ARCHITECTURE.md` | Plan for a later zero-knowledge sync (not built) |
+| `SECURITY.md` | How to report a vulnerability privately |
+| `PRIVACY.md` | Privacy policy: the app collects nothing |
+| `RELEASING.md` | Developer ID signing, notarization, publishing a release |
+| `CONTRIBUTING.md` | How to help; why pull requests are not accepted yet |
+| `CHANGELOG.md` | Release history |
 | `Sources/CArgon2/VENDOR.md` | Argon2 provenance and per-file hashes |
 
 ## License
 
-To be decided by the owner. Vendored Argon2 is CC0 1.0 / Apache 2.0 (`Sources/CArgon2/LICENSE`).
+PrivateVault is **source-available** under the [Functional Source License, Version 1.1, ALv2 Future
+License](LICENSE.md) (FSL-1.1-ALv2). In plain words:
+
+- You may read, audit, build, modify and use it — personally, inside your company, for research and education.
+- You may not use it to offer a competing commercial product or service.
+- Each released version automatically becomes available under the Apache License 2.0 two years after its release.
+
+The vendored Argon2 code keeps its own license, CC0 1.0 / Apache 2.0 (`Sources/CArgon2/LICENSE`).
+"PrivateVault" and the app icon are not licensed for use by other products.
+
+## No warranty
+
+PrivateVault is provided "as is", without warranty of any kind (see `LICENSE.md`). By design there is no
+backdoor: if you lose your Master Password, or both your Secret Key and your Recovery Kit, your data cannot be
+recovered by anyone. Keep encrypted backups and your printed Recovery Kit.
