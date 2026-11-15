@@ -2,9 +2,11 @@
 # Runs the PrivateVault test suite (Swift Testing).
 # Usage: Scripts/run-tests.sh [-c release] [extra swift test args, e.g. --filter KDF]
 #
-# Builds ONLY the test target and what it depends on (VaultCore, CArgon2, CSecureMemory), never the SwiftUI app.
-# So the suite runs even where the app cannot be compiled — e.g. Command Line Tools for Swift 6.4, which ship
-# without the SwiftUI macro plugin. Works with the Command Line Tools and with Xcode (used by CI).
+# Builds the whole package with its test bundle (`swift build --build-tests`). Where the SwiftUI app cannot be
+# compiled — the Command Line Tools for Swift 6.4 ship without the SwiftUI macro plugin — it builds only the test
+# target and what it depends on (VaultCore, CArgon2, CSecureMemory); Swift 6.4 links the test bundle as part of that
+# target, earlier SwiftPM versions (e.g. Xcode 26.x, used by CI) only compile it, hence the full build first.
+# Any other build error stops the script. Works with the Command Line Tools and with Xcode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,5 +37,17 @@ while (( $# )); do
 done
 
 # `swift test` compiles VaultCore for @testable import by itself (also in release); `swift build` must be told so.
-swift build --target VaultCoreTests -Xswiftc -enable-testing "${config[@]}" "${toolchain[@]}"
+# Both builds use identical flags, so the fallback reuses everything the first attempt compiled.
+log="$(mktemp "${TMPDIR:-/tmp}/pv-tests.XXXXXX")"   # explicit template: works with BSD and GNU mktemp
+echo "▸ Building the package and its tests…"
+if swift build --build-tests -Xswiftc -enable-testing "${config[@]}" "${toolchain[@]}" >"$log" 2>&1; then
+  grep -E "Build complete" "$log" | tail -1 || true
+elif grep -q "plugin for module 'SwiftUIMacros' not found" "$log"; then
+  echo "NOTE: this toolchain cannot compile the SwiftUI app (no SwiftUI macro plugin) — building only the core and its tests."
+  swift build --target VaultCoreTests -Xswiftc -enable-testing "${config[@]}" "${toolchain[@]}"
+else
+  grep -E "error:" "$log" | head -40 >&2 || true
+  echo "✗ Build failed — full log: $log" >&2
+  exit 1
+fi
 exec swift test --skip-build --disable-xctest "${config[@]}" "${toolchain[@]}" "${test_args[@]}"

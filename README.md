@@ -103,7 +103,8 @@ Scripts/run-tests.sh --filter KDF                     # a subset
 Scripts/run-tests.sh -c release --filter 'Argon2|AEAD|HKDF|HPKE'   # known-answer tests in a release build
 ```
 
-The script builds only the test target and the core — never the app — so it works wherever the core compiles.
+The script builds the package with its tests; where the app cannot be compiled (Command Line Tools for Swift 6.4),
+it builds only the core and its tests, so the suite runs wherever the core compiles.
 Tests pin byte-level formats with known-answer vectors; OS boundaries (Keychain, Secure Enclave, Touch ID,
 clipboard) are faked by default. `Scripts/secret-scan.sh --all` and `Scripts/audit-network.sh --strict` are the
 other two gates. CI runs all three, plus an app build, on every push and pull request once the repository is

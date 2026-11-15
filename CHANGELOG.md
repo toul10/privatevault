@@ -30,7 +30,8 @@ First public source release.
 
 ### Project
 - Swift Testing suite with known-answer vectors and a frozen golden v1 vault and backup fixture.
-- `Scripts/run-tests.sh` builds only the core and its tests, so the suite runs with the Command Line Tools.
+- `Scripts/run-tests.sh` runs the suite with Xcode or with the Command Line Tools alone (where the app cannot be
+  compiled, it builds only the core and its tests).
 - Development builds use their own identity ("PrivateVault Dev"), sandbox container and Keychain items, so they
   can never open an installed vault or overwrite its Secret Key.
 - Pre-commit and pre-push secret scans: vault files and backups (also renamed), keys and signing material,
